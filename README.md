@@ -1,69 +1,59 @@
 # Conduit
 
-A one-click server-hosting panel for your single-player Minecraft worlds, powered by
-[playit.gg](https://playit.gg) — with optional Geyser / Floodgate cross-play.
+One-click server hosting for your single-player Minecraft worlds, powered by [playit.gg](https://playit.gg) — with optional Geyser / Floodgate cross-play for Bedrock players.
 
-*By GoatTech Industries.*
+*By [GoatTech Industries](https://github.com/GoatTech-42).*
 
-## ✨ Features
+---
 
-- **"Conduit — Host This World"** button injected into the in-game pause menu.
-- **Portable, zero-admin setup**: the playit agent binary is downloaded on demand into your
-  `conduit/` folder — no MSI, no `sudo`, no service install.
-- **Link your playit.gg account** to list and reuse your tunnels (TCP for Java, UDP for
-  Bedrock) without leaving the game.
-- **Geyser / Floodgate side-car** is auto-downloaded and configured when you toggle
-  cross-play on.
-- **Live admin panel**: whitelist, kick, ban, op/deop, render distance, simulation
-  distance, `/say` and way more settings, plus a streaming console tail that multiplexes the
-  server, playit and Geyser logs into one view.
-- **Render / simulation distance are greyed out** in the local Video Settings screen while
-  you're hosting — they live in the admin panel instead, so clients and your own view stay
-  in sync.
-- Your tunneled server address is **auto-added to your Multiplayer list** and cleaned up
-  when you stop hosting.
-- Still running after you disconnect? A **"Manage Conduit Servers"** button appears on the
-  Multiplayer screen so you can copy the IP, stop playit, or shut everything down cleanly.
+## Features
 
-## 📦 Requirements
+- **"Host This World" button** injected into the in-game pause menu — one click to go from single-player to multiplayer.
+- **Zero-admin setup** — the playit agent binary is downloaded on demand into `conduit/`; no MSI, no `sudo`, no service install.
+- **playit.gg account linking** — paste a claim code from [playit.gg/claim](https://playit.gg/claim) to link your account and reuse tunnels without leaving the game.
+- **Geyser / Floodgate cross-play** — toggle on Bedrock support and Conduit auto-downloads and configures standalone Geyser next to your server.
+- **Live admin panel** — whitelist, kick, ban, op/deop, render distance, simulation distance, `/say` broadcasting, and a streaming console tail that multiplexes server + playit + Geyser logs.
+- **Smart distance locking** — render / simulation distance sliders in Video Settings are disabled while hosting so the server and all clients stay in sync (adjustable from the admin panel).
+- **Auto server-list entry** — your tunneled address is automatically added to the Multiplayer list and cleaned up when you stop hosting.
+- **Manage running servers** — a "Manage Conduit Servers" button appears on the Multiplayer screen if a tunnel is still running, letting you copy the IP, open the admin panel, or shut everything down.
+- **Dedicated-server safe** — the jar is harmless on servers; the common entrypoint logs its presence and the client code is never loaded.
 
-| Component         | Version                                           |
-| :---------------- | :------------------------------------------------ |
-| Minecraft         | **26.1.2** (the "Tiny Takeover" update)           |
-| Fabric Loader     | **0.18.6+**                                       |
-| Fabric API        | **0.145.4+26.1.2** or newer                       |
-| Java              | **25+**                                           |
+## Requirements
 
-Internally the project uses **Gradle 9.4.1** and **Fabric Loom `1.16-SNAPSHOT`** as
-specified by the official [Fabric 26.1 post](https://fabricmc.net/2026/03/14/261.html).
-Minecraft 26.1 is the first unobfuscated release, so the mod is built against Mojang's
-official mappings — no Yarn remapping, no `remapJar` step.
+| Component     | Version                        |
+|:--------------|:-------------------------------|
+| Minecraft     | **26.1.2** (Tiny Takeover)     |
+| Fabric Loader | **0.18.6** or newer            |
+| Fabric API    | **0.145.4+26.1.2** or newer    |
+| Java          | **25** or newer                |
 
-## 🛠️ Building
+The project builds against Mojang's official mappings (no Yarn, no `remapJar`) using **Gradle 9.4.1** and **Fabric Loom 1.16-SNAPSHOT**.
 
-There's a zero-admin Python build script that takes care of everything:
+## Quick Start
+
+### Building
+
+A zero-admin Python build script handles everything, including bootstrapping the JDK if needed:
 
 ```bash
 python3 scripts/build.py
 ```
 
-The first run will:
+On first run the script will:
 
-1. Look for a JDK 25+ on `$PATH` / in `$JAVA_HOME`.
-2. If none is found, download the [Eclipse Temurin](https://adoptium.net/) JDK **into
-   `.conduit-build/jdk/`** — no `apt`, `brew`, `winget`, elevated shell, or registry edits
-   required.
-3. Invoke the bundled Gradle wrapper to produce `build/libs/conduit-<version>.jar`.
+1. Look for a JDK 25+ on `$PATH` / `$JAVA_HOME`.
+2. If none is found, download [Eclipse Temurin](https://adoptium.net/) JDK 25 into `.conduit-build/jdk/` (no elevated privileges required).
+3. Invoke the Gradle wrapper to produce `build/libs/conduit-1.0.0.jar`.
 
-You can also pass a Gradle task:
+Other useful invocations:
 
 ```bash
-python3 scripts/build.py clean          # clean
-python3 scripts/build.py --jdk-only     # just bootstrap Java, don't build
-python3 scripts/build.py build          # default
+python3 scripts/build.py clean          # gradle clean
+python3 scripts/build.py --jdk-only     # bootstrap JDK without building
+python3 scripts/build.py --force-bootstrap  # always download a fresh JDK
 ```
 
-If you'd rather drive Gradle yourself after the JDK bootstrap:
+If you prefer to drive Gradle directly:
 
 ```bash
 python3 scripts/build.py --jdk-only
@@ -71,55 +61,58 @@ export JAVA_HOME="$(pwd)/.conduit-build/jdk/$(ls .conduit-build/jdk)"
 ./gradlew build
 ```
 
-## 🧪 Running in a dev environment
+### Installing
+
+Drop the built `conduit-1.0.0.jar` into your `.minecraft/mods/` folder alongside Fabric API.
+
+### Running in a dev environment
 
 ```bash
-./gradlew runClient   # launch a dev-mapped Minecraft client with Conduit loaded
-./gradlew runServer   # or a dedicated server (Conduit just no-ops there)
+./gradlew runClient   # launches a dev-mapped Minecraft client with Conduit
+./gradlew runServer   # launches a dedicated server (Conduit no-ops there)
 ```
 
-## 📁 Runtime layout
+## Runtime Layout
 
-Conduit creates a single self-contained directory under your Minecraft game folder:
+Conduit keeps everything self-contained under a single directory in your game folder:
 
 ```
 <.minecraft>/conduit/
-├── conduit.json                    # user-level config (playit secret, tunnel id, ...)
-├── bin/
-│   └── playit(.exe)                # downloaded agent binary
-├── playit-data/                    # PLAYIT_CONFIG_HOME, handled by the agent
-└── geyser/
-    ├── Geyser-Standalone.jar
-    ├── floodgate-standalone.jar
-    ├── config.yml                  # regenerated each start — feel free to edit
-    └── key.pem                     # generated by floodgate on first run
++-- conduit.json                  # config (playit secret, tunnel id, defaults)
++-- bin/
+|   +-- playit(.exe)              # downloaded agent binary
++-- playit-data/                  # PLAYIT_CONFIG_HOME (agent-managed)
++-- geyser/
+    +-- Geyser-Standalone.jar
+    +-- floodgate-standalone.jar
+    +-- config.yml                # regenerated each start; safe to edit
+    +-- key.pem                   # generated by Floodgate on first run
 ```
 
-## 🏗️ Project structure
+## Project Structure
 
 ```
 src/
-├── main/java/com/goattech/conduit/      # both-sides code (entrypoint, config, util, managers)
-│   ├── ConduitMod.java                  # MAIN (both sides) entrypoint
-│   ├── config/                          # on-disk config
-│   ├── playit/                          # playit agent subprocess manager
-│   ├── geyser/                          # Geyser + Floodgate subprocess manager
-│   └── util/                            # Downloader, PlatformBinary
-└── client/java/com/goattech/conduit/
-    ├── client/                          # CLIENT entrypoint, screens, controller
-    ├── server/                          # thin wrapper over the integrated server
-    └── client/mixin/                    # VideoSettingsScreen gating mixin
++-- main/java/com/goattech/conduit/
+|   +-- ConduitMod.java           # common (both-sides) entrypoint
+|   +-- config/                   # on-disk JSON config
+|   +-- playit/                   # playit agent subprocess manager
+|   +-- geyser/                   # Geyser + Floodgate subprocess manager
+|   +-- util/                     # Downloader (HttpClient), PlatformBinary
++-- client/java/com/goattech/conduit/
+    +-- client/                   # client entrypoint, screens, controller
+    +-- server/                   # integrated-server bridge, server-list manager
 ```
 
-## 🔌 Notes on compatibility
+## Platform Support
 
-- **Linux, Windows**: full auto-download of the playit agent binary.
-- **macOS**: the playit project doesn't publish a standalone mac binary at the moment.
-  Conduit will surface an actionable error telling you to `brew install playit` and add it
-  to `$PATH`; once that's done everything else works identically.
-- **Dedicated servers**: the jar is harmless there — the common entrypoint just logs its
-  presence and the client-only code is never loaded.
+| Platform        | Status                                                                 |
+|:----------------|:-----------------------------------------------------------------------|
+| **Linux**       | Full support — agent binary auto-downloaded.                           |
+| **Windows**     | Full support — agent binary auto-downloaded.                           |
+| **macOS**       | Partial — install `playit` via Homebrew (`brew install playit`) first. |
+| **Dedicated**   | The jar is safe to include; it no-ops on the server side.              |
 
-## 📜 License
+## License
 
-MIT.
+[MIT](LICENSE)

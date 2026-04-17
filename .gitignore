@@ -1,54 +1,46 @@
-# gradle
+# ── Gradle ─────────────────────────────────────────────────────────────────────
 .gradle/
-.gradle
 build/
 **/build/
 !**/src/**/build/
 out/
 classes/
-
-# Ignore Gradle GUI config
 gradle-app.setting
-
-# Avoid ignoring Gradle wrapper jar file (.jar files are usually ignored)
-!gradle-wrapper.jar
-
-# Avoid ignore Gradle wrapper properties
-!gradle-wrapper.properties
-
-# Cache of project
 .gradletasknamecache
 
-# eclipse
-*.launch
-.classpath
-.project
+# Keep the wrapper committed
+!gradle-wrapper.jar
+!gradle-wrapper.properties
 
-# Eclipse Gradle plugin generated files
-# JDT-specific (Eclipse Java Development Tools)
-
-# idea
+# ── IDE: IntelliJ IDEA ────────────────────────────────────────────────────────
 .idea/
 *.iml
 *.ipr
 *.iws
 
-# vscode
+# ── IDE: Eclipse ──────────────────────────────────────────────────────────────
+*.launch
+.classpath
+.project
 .settings/
+
+# ── IDE: VS Code ──────────────────────────────────────────────────────────────
 .vscode/
-bin/
 
-# macos
-*.DS_Store
+# ── OS artifacts ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
 
-# fabric
-run/
-
-# java
+# ── Java ──────────────────────────────────────────────────────────────────────
 hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+bin/
 
-# conduit build script downloads
+# ── Fabric / Minecraft dev ────────────────────────────────────────────────────
+run/
+
+# ── Conduit build-script downloads ────────────────────────────────────────────
 .conduit-build/
