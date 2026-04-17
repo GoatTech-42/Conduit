@@ -1,0 +1,32 @@
+{
+	"schemaVersion": 1,
+	"id": "conduit",
+	"version": "${version}",
+	"name": "Conduit",
+	"description": "One-click server-hosting panel for your single-player Minecraft worlds, powered by playit.gg — with optional Geyser / Floodgate cross-play.",
+	"authors": [
+		"GoatTech Industries"
+	],
+	"contact": {
+		"homepage": "https://github.com/GoatTech-42/Conduit",
+		"sources": "https://github.com/GoatTech-42/Conduit",
+		"issues": "https://github.com/GoatTech-42/Conduit/issues"
+	},
+	"license": "MIT",
+	"icon": "assets/conduit/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.goattech.conduit.ConduitMod"
+		],
+		"client": [
+			"com.goattech.conduit.client.ConduitClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.18.6",
+		"minecraft": "~26.1.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
