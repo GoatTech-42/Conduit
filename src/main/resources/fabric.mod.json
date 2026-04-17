@@ -3,7 +3,7 @@
 	"id": "conduit",
 	"version": "${version}",
 	"name": "Conduit",
-	"description": "One-click server-hosting panel for your single-player Minecraft worlds, powered by playit.gg — with optional Geyser / Floodgate cross-play.",
+	"description": "One-click server-hosting panel for your single-player Minecraft worlds, powered by playit.gg with optional Geyser/Floodgate cross-play.",
 	"authors": [
 		"GoatTech Industries"
 	],
@@ -28,5 +28,8 @@
 		"minecraft": "~26.1.2",
 		"java": ">=25",
 		"fabric-api": "*"
+	},
+	"suggests": {
+		"fabric-language-kotlin": "*"
 	}
 }

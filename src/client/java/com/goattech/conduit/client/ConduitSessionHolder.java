@@ -6,40 +6,45 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Tracks the current Conduit hosting session (or the lack of one).
  *
- * <p>Kept deliberately simple so the multiplayer screen / pause menu can poll it cheaply every
- * init. State is mutated only from the client thread (or the manager's completion callbacks)
- * but reads are fine from anywhere since fields are volatile.
+ * <p>Kept intentionally simple so the multiplayer screen and pause menu can poll it
+ * cheaply every frame. State is mutated from the client thread or async completion
+ * callbacks; reads are safe from any thread because the fields are volatile.
  */
 public final class ConduitSessionHolder {
 
+	/** Hosting lifecycle state. */
 	public enum State {
 		IDLE, STARTING, RUNNING, STOPPING, ERROR
 	}
 
+	/** Immutable snapshot of a hosting session. */
 	public record SessionInfo(
 			String worldName,
-			String tunnelJavaAddress,     // host:port for Java clients
-			String tunnelBedrockAddress,  // host:port (UDP) for Bedrock clients, or null
+			String tunnelJavaAddress,
+			String tunnelBedrockAddress,
 			int localPort,
 			boolean crossplay,
 			Instant startedAt,
 			String lastError
-	) { }
+	) {}
 
 	private volatile State state = State.IDLE;
-	private final AtomicReference<SessionInfo> info = new AtomicReference<>(null);
+	private final AtomicReference<SessionInfo> info = new AtomicReference<>();
 
-	public State state() { return state; }
-	public void setState(State s) { this.state = s; }
+	// ── Accessors ────────────────────────────────────────────────────────────
 
-	public SessionInfo info() { return info.get(); }
-	public void setInfo(SessionInfo i) { this.info.set(i); }
+	public State       state() { return state; }
+	public SessionInfo info()  { return info.get(); }
 
+	public void setState(State s)    { this.state = s; }
+	public void setInfo(SessionInfo i) { info.set(i); }
+
+	/** Returns {@code true} when a hosting flow is in progress or actively running. */
 	public boolean isAnythingRunning() {
-		State s = state;
-		return s == State.STARTING || s == State.RUNNING;
+		return state == State.STARTING || state == State.RUNNING;
 	}
 
+	/** Resets to the idle state. */
 	public void clear() {
 		state = State.IDLE;
 		info.set(null);

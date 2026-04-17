@@ -11,9 +11,7 @@ base {
 }
 
 repositories {
-	// Add repositories to retrieve artifacts from in here.
-	// You should only use this when depending on other mods because
-	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
+	// Loom adds the essential maven repositories automatically.
 }
 
 loom {
@@ -27,56 +25,87 @@ loom {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Dependencies
+// ---------------------------------------------------------------------------
+
 dependencies {
-	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-
 	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-
-	// Fabric API. This is technically optional, but we need it for events.
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 }
 
-processResources {
-	inputs.property "version", project.version
-
-	filesMatching("fabric.mod.json") {
-		expand "version": inputs.properties.version
-	}
-}
+// ---------------------------------------------------------------------------
+// Compilation
+// ---------------------------------------------------------------------------
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 25
-	it.options.encoding = "UTF-8"
+	options.release = 25
+	options.encoding = 'UTF-8'
+	options.compilerArgs += ['-Xlint:all', '-Xlint:-processing']
 }
 
 java {
-	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
-	// if it is present.
-	// If you remove this line, sources will not be generated.
 	withSourcesJar()
-
 	sourceCompatibility = JavaVersion.VERSION_25
 	targetCompatibility = JavaVersion.VERSION_25
 }
 
-jar {
-	inputs.property "projectName", project.name
+// ---------------------------------------------------------------------------
+// Resource processing  (inject mod version into fabric.mod.json)
+// ---------------------------------------------------------------------------
 
-	from("LICENSE") {
-		rename { "${it}_${project.archives_base_name}"}
+processResources {
+	inputs.property 'version', project.version
+
+	filesMatching('fabric.mod.json') {
+		expand 'version': inputs.properties.version
 	}
 }
 
-// configure the maven publication
+// ---------------------------------------------------------------------------
+// JAR packaging
+// ---------------------------------------------------------------------------
+
+jar {
+	from('LICENSE') {
+		rename { "${it}_${project.archives_base_name}" }
+	}
+
+	manifest {
+		attributes(
+			'Implementation-Title':   project.archives_base_name,
+			'Implementation-Version': project.version,
+			'Built-By':               System.getProperty('user.name', 'ci'),
+			'Build-Timestamp':        new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ").format(new Date()),
+		)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Publishing
+// ---------------------------------------------------------------------------
+
 publishing {
 	publications {
-		create("mavenJava", MavenPublication) {
+		create('mavenJava', MavenPublication) {
 			from components.java
+
+			pom {
+				name = 'Conduit'
+				description = 'One-click server-hosting panel for Minecraft single-player worlds.'
+				url = 'https://github.com/GoatTech-42/Conduit'
+				licenses {
+					license {
+						name = 'MIT License'
+						url = 'https://opensource.org/licenses/MIT'
+					}
+				}
+			}
 		}
 	}
 
 	repositories {
-		// Add repositories to publish to here.
+		// Add publish targets here.
 	}
 }
