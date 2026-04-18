@@ -2,6 +2,7 @@ package com.goattech.conduit.playit;
 
 import com.goattech.conduit.ConduitMod;
 import com.goattech.conduit.config.ConduitConfig;
+import com.goattech.conduit.util.ConsoleLog;
 import com.goattech.conduit.util.Downloader;
 import com.goattech.conduit.util.PlatformBinary;
 
@@ -670,6 +671,83 @@ public final class PlayitAgentManager {
 		// Evict oldest entries when over capacity.
 		while (logBuffer.size() > LOG_BUFFER_CAPACITY) {
 			logBuffer.removeFirst();
+		}
+		// Mirror into the global Conduit console so the admin-panel Console tab
+		// can show a unified, interleaved view of every subsystem.
+		ConsoleLog.INSTANCE.append("playit", stripOwnPrefix(line));
+	}
+
+	private static String stripOwnPrefix(String s) {
+		// pumpOutput / bootstrap / link already prefix their lines; keep them
+		// out of the unified console so we don't double-tag.
+		if (s == null) return "";
+		if (s.startsWith("[playit] "))    return s.substring(9);
+		if (s.startsWith("[bootstrap] ")) return s.substring(12);
+		if (s.startsWith("[link] "))      return s.substring(7);
+		if (s.startsWith("[cmd] "))       return s.substring(6);
+		if (s.startsWith("[secret-path] ")) return s.substring(14);
+		return s;
+	}
+
+	// ── Additional CLI commands exposed to the UI ────────────────────────────
+
+	/**
+	 * Runs {@code playit reset} to wipe the agent's local state (secret,
+	 * tunnels, etc.). Conduit's own stored secret is cleared as well.
+	 *
+	 * @return the agent's stdout/stderr output, for display in the console.
+	 */
+	public CompletableFuture<String> resetAgentAsync() {
+		return ensureBinaryAsync().thenApply(bin -> {
+			try {
+				shutdownBlocking();
+				CommandResult r = runCommand(bin, "reset");
+				config.values().playitSecretKey = "";
+				config.values().playitGuestMode = false;
+				config.values().lastTunnelId = "";
+				config.save();
+				ConduitMod.LOGGER.info("playit agent reset (exit={})", r.exitCode());
+				return r.output();
+			} catch (IOException | InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new RuntimeException("reset failed: " + e.getMessage(), e);
+			}
+		});
+	}
+
+	/**
+	 * Runs {@code playit secret-path} and returns its raw output. Useful when
+	 * the user wants to know where the local secret file lives, or to copy it
+	 * somewhere safe.
+	 */
+	public CompletableFuture<String> secretPathAsync() {
+		return ensureBinaryAsync().thenApply(bin -> {
+			try {
+				CommandResult r = runCommand(bin, "secret-path");
+				return r.output().strip();
+			} catch (IOException | InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new RuntimeException("secret-path failed: " + e.getMessage(), e);
+			}
+		});
+	}
+
+	/**
+	 * Writes a raw command to the <em>running</em> agent's stdin. Useful for
+	 * the few interactive prompts the agent may show (e.g. "Press enter to
+	 * continue"). Returns {@code false} if the agent isn't running.
+	 */
+	public boolean writeStdin(String input) {
+		Process p = process.get();
+		if (p == null || !p.isAlive()) return false;
+		try {
+			var out = p.getOutputStream();
+			out.write((input + System.lineSeparator()).getBytes(StandardCharsets.UTF_8));
+			out.flush();
+			return true;
+		} catch (IOException e) {
+			ConduitMod.LOGGER.debug("playit stdin write failed: {}", e.toString());
+			return false;
 		}
 	}
 

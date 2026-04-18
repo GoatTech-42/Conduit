@@ -21,7 +21,7 @@ import java.util.function.IntConsumer;
  *
  * <p>The screen is organized into clearly separated sections with proper centering and
  * consistent spacing. All widgets are aligned to a two-column grid centered on the
- * screen, with clear section labels.
+ * screen, with visible section labels between groups.
  *
  * <h3>Sections</h3>
  * <ol>
@@ -29,7 +29,7 @@ import java.util.function.IntConsumer;
  *   <li><b>Gameplay Rules</b> &mdash; PvP, allow cheats, allow flight, force game mode, crossplay.</li>
  *   <li><b>World Rules</b> &mdash; spawn protection, spawn NPCs/animals/monsters, announce advancements.</li>
  *   <li><b>Server Info</b> &mdash; MOTD, idle timeout, command blocks.</li>
- *   <li><b>Actions</b> &mdash; start hosting, link account, cancel.</li>
+ *   <li><b>Account</b> &mdash; link / unlink playit.gg (optional).</li>
  * </ol>
  */
 public class HostWorldScreen extends Screen {
@@ -73,6 +73,15 @@ public class HostWorldScreen extends Screen {
 	private static final int COL_GAP = 6;
 	/** Row height (widget height + vertical gap). */
 	private static final int ROW_H = 24;
+	/** Vertical space reserved for a section header (rendered text). */
+	private static final int SECTION_H = 14;
+
+	// Section header Y positions (computed in init, consumed by extractRenderState).
+	private int headerCoreY;
+	private int headerRulesY;
+	private int headerWorldY;
+	private int headerServerY;
+	private int headerAccountY;
 
 	private static final String[] GAME_MODES = {"survival", "creative", "adventure", "spectator"};
 	private static final String[] DIFFICULTIES = {"peaceful", "easy", "normal", "hard"};
@@ -85,8 +94,8 @@ public class HostWorldScreen extends Screen {
 		this.chosenGameMode           = cfg.defaultGameMode;
 		this.chosenDifficulty         = cfg.defaultDifficulty;
 		this.chosenMaxPlayers         = cfg.defaultMaxPlayers;
-		this.chosenRenderDistance      = cfg.defaultRenderDistance;
-		this.chosenSimulationDistance  = cfg.defaultSimulationDistance;
+		this.chosenRenderDistance     = cfg.defaultRenderDistance;
+		this.chosenSimulationDistance = cfg.defaultSimulationDistance;
 		this.chosenSpawnProtection    = cfg.spawnProtection;
 		this.chosenPlayerIdleTimeout  = cfg.playerIdleTimeout;
 	}
@@ -99,11 +108,12 @@ public class HostWorldScreen extends Screen {
 		int cx   = width / 2;
 		int colL = cx - COL_W - COL_GAP / 2;
 		int colR = cx + COL_GAP / 2;
-		int y    = 40;
+		int y    = 36;
 
 		// ────────────────────────────── Core Settings ──────────────────────────────
+		headerCoreY = y; y += SECTION_H;
 
-		// Row 1: Game mode + Difficulty
+		// Row: Game mode + Difficulty
 		gameModeCycle = Button.builder(
 						Component.translatable("conduit.screen.host.gamemode",
 								displayName(chosenGameMode)),
@@ -127,7 +137,7 @@ public class HostWorldScreen extends Screen {
 		addRenderableWidget(difficultyCycle);
 		y += ROW_H;
 
-		// Row 2: Max players slider + Render distance slider
+		// Row: Max players + Render distance
 		addRenderableWidget(new IntSlider(colL, y, COL_W, 20,
 				chosenMaxPlayers, 2, 50,
 				"conduit.screen.host.max_players",
@@ -139,7 +149,7 @@ public class HostWorldScreen extends Screen {
 				v -> chosenRenderDistance = v));
 		y += ROW_H;
 
-		// Row 3: Simulation distance slider + Spawn protection slider
+		// Row: Simulation distance + Spawn protection
 		addRenderableWidget(new IntSlider(colL, y, COL_W, 20,
 				chosenSimulationDistance, 2, 32,
 				"conduit.screen.admin.simulation_distance",
@@ -149,11 +159,12 @@ public class HostWorldScreen extends Screen {
 				chosenSpawnProtection, 0, 64,
 				"conduit.screen.host.spawn_protection",
 				v -> chosenSpawnProtection = v));
-		y += ROW_H;
+		y += ROW_H + 4;
 
 		// ────────────────────────────── Gameplay Rules ─────────────────────────────
+		headerRulesY = y; y += SECTION_H;
 
-		// Row 4: PvP + Allow Cheats
+		// Row: PvP + Allow Cheats
 		pvpBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.pvp"), font)
 				.pos(colL, y).selected(cfg.defaultPvp).build();
@@ -165,7 +176,7 @@ public class HostWorldScreen extends Screen {
 		addRenderableWidget(allowCheatsBox);
 		y += ROW_H;
 
-		// Row 5: Allow Flight + Force Game Mode
+		// Row: Allow Flight + Force Game Mode
 		allowFlightBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.allow_flight"), font)
 				.pos(colL, y).selected(cfg.allowFlight).build();
@@ -177,7 +188,7 @@ public class HostWorldScreen extends Screen {
 		addRenderableWidget(forceGameModeBox);
 		y += ROW_H;
 
-		// Row 6: Crossplay + Announce Advancements
+		// Row: Crossplay + Announce Advancements
 		crossplayBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.crossplay"), font)
 				.pos(colL, y).selected(cfg.crossplayDefault).build();
@@ -187,11 +198,12 @@ public class HostWorldScreen extends Screen {
 						Component.translatable("conduit.screen.host.announce_advancements"), font)
 				.pos(colR, y).selected(cfg.announceAdvancements).build();
 		addRenderableWidget(announceAdvancementsBox);
-		y += ROW_H;
+		y += ROW_H + 4;
 
 		// ────────────────────────────── World Rules ────────────────────────────────
+		headerWorldY = y; y += SECTION_H;
 
-		// Row 7: Spawn NPCs + Spawn Animals
+		// Row: Spawn NPCs + Spawn Animals
 		spawnNpcsBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.spawn_npcs"), font)
 				.pos(colL, y).selected(cfg.spawnNpcs).build();
@@ -203,7 +215,7 @@ public class HostWorldScreen extends Screen {
 		addRenderableWidget(spawnAnimalsBox);
 		y += ROW_H;
 
-		// Row 8: Spawn Monsters + Enable Command Blocks
+		// Row: Spawn Monsters + Command Blocks
 		spawnMonstersBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.spawn_monsters"), font)
 				.pos(colL, y).selected(cfg.spawnMonsters).build();
@@ -213,11 +225,12 @@ public class HostWorldScreen extends Screen {
 						Component.translatable("conduit.screen.host.enable_command_block"), font)
 				.pos(colR, y).selected(cfg.enableCommandBlock).build();
 		addRenderableWidget(enableCommandBlockBox);
-		y += ROW_H;
+		y += ROW_H + 4;
 
 		// ────────────────────────────── Server Info ────────────────────────────────
+		headerServerY = y; y += SECTION_H;
 
-		// Row 9: MOTD (full width)
+		// Row: MOTD (full width)
 		int motdW = COL_W * 2 + COL_GAP;
 		motdBox = new EditBox(font, colL, y, motdW, 20,
 				Component.translatable("conduit.screen.host.motd"));
@@ -227,24 +240,15 @@ public class HostWorldScreen extends Screen {
 		addRenderableWidget(motdBox);
 		y += ROW_H;
 
-		// Row 10: Player idle timeout slider (full width)
+		// Row: Player idle timeout (full width)
 		addRenderableWidget(new IntSlider(colL, y, motdW, 20,
 				chosenPlayerIdleTimeout, 0, 60,
 				"conduit.screen.host.idle_timeout",
 				v -> chosenPlayerIdleTimeout = v));
 		y += ROW_H + 4;
 
-		// ────────────────────────────── Action Buttons ─────────────────────────────
-
-		// Start Hosting (prominent, centered)
-		int btnW = 200;
-		startButton = Button.builder(
-						Component.translatable("conduit.screen.host.start"),
-						b -> startHosting())
-				.bounds(cx - btnW / 2, y, btnW, 20)
-				.build();
-		addRenderableWidget(startButton);
-		y += ROW_H;
+		// ────────────────────────────── Account ────────────────────────────────────
+		headerAccountY = y; y += SECTION_H;
 
 		// Link / Unlink playit.gg account (centered row)
 		boolean linked = ConduitClient.get().playit().isLinkedAccount();
@@ -271,9 +275,19 @@ public class HostWorldScreen extends Screen {
 		unlinkButton.visible = linked;
 		unlinkButton.active = linked;
 		addRenderableWidget(unlinkButton);
+		y += ROW_H + 6;
+
+		// ────────────────────────────── Action Buttons ─────────────────────────────
+
+		int btnW = 200;
+		startButton = Button.builder(
+						Component.translatable("conduit.screen.host.start"),
+						b -> startHosting())
+				.bounds(cx - btnW / 2, y, btnW, 20)
+				.build();
+		addRenderableWidget(startButton);
 		y += ROW_H;
 
-		// Cancel
 		addRenderableWidget(Button.builder(
 						Component.translatable("conduit.screen.host.cancel"),
 						b -> onClose())
@@ -329,24 +343,24 @@ public class HostWorldScreen extends Screen {
 
 		// Persist all choices up-front so reconnect/admin panel reflect them.
 		ConduitConfig.Values cfg = ConduitClient.get().config().values();
-		cfg.crossplayDefault        = crossplayBox.selected();
-		cfg.defaultAllowCheats      = allowCheatsBox.selected();
-		cfg.defaultPvp              = pvpBox.selected();
-		cfg.defaultGameMode         = chosenGameMode;
-		cfg.defaultDifficulty       = chosenDifficulty;
-		cfg.defaultMaxPlayers       = chosenMaxPlayers;
-		cfg.defaultRenderDistance    = chosenRenderDistance;
+		cfg.crossplayDefault          = crossplayBox.selected();
+		cfg.defaultAllowCheats        = allowCheatsBox.selected();
+		cfg.defaultPvp                = pvpBox.selected();
+		cfg.defaultGameMode           = chosenGameMode;
+		cfg.defaultDifficulty         = chosenDifficulty;
+		cfg.defaultMaxPlayers         = chosenMaxPlayers;
+		cfg.defaultRenderDistance     = chosenRenderDistance;
 		cfg.defaultSimulationDistance = chosenSimulationDistance;
-		cfg.motd                    = motdBox.getValue();
-		cfg.allowFlight             = allowFlightBox.selected();
-		cfg.forceGameMode           = forceGameModeBox.selected();
-		cfg.spawnNpcs               = spawnNpcsBox.selected();
-		cfg.spawnAnimals            = spawnAnimalsBox.selected();
-		cfg.spawnMonsters           = spawnMonstersBox.selected();
-		cfg.announceAdvancements    = announceAdvancementsBox.selected();
-		cfg.enableCommandBlock      = enableCommandBlockBox.selected();
-		cfg.spawnProtection         = chosenSpawnProtection;
-		cfg.playerIdleTimeout       = chosenPlayerIdleTimeout;
+		cfg.motd                      = motdBox.getValue();
+		cfg.allowFlight               = allowFlightBox.selected();
+		cfg.forceGameMode             = forceGameModeBox.selected();
+		cfg.spawnNpcs                 = spawnNpcsBox.selected();
+		cfg.spawnAnimals              = spawnAnimalsBox.selected();
+		cfg.spawnMonsters             = spawnMonstersBox.selected();
+		cfg.announceAdvancements      = announceAdvancementsBox.selected();
+		cfg.enableCommandBlock        = enableCommandBlockBox.selected();
+		cfg.spawnProtection           = chosenSpawnProtection;
+		cfg.playerIdleTimeout         = chosenPlayerIdleTimeout;
 		ConduitClient.get().config().save();
 
 		GameType type = switch (chosenGameMode.toLowerCase(Locale.ROOT)) {
@@ -407,16 +421,37 @@ public class HostWorldScreen extends Screen {
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float dt) {
 		super.extractRenderState(g, mx, my, dt);
-		g.centeredText(font, title, width / 2, 8, 0xFFFFFF);
+		int cx = width / 2;
 
+		// Title and subtitle
+		g.centeredText(font, title, cx, 8, 0xFFFFFF);
 		Component subtitle = ConduitClient.get().playit().isLinkedAccount()
 				? Component.translatable("conduit.screen.host.subtitle_linked")
 				: Component.translatable("conduit.screen.host.subtitle_guest");
-		g.centeredText(font, subtitle, width / 2, 22, 0xAAAAAA);
+		g.centeredText(font, subtitle, cx, 22, 0xAAAAAA);
 
+		// Section headers (left-aligned with a small ▸ marker and a faint divider)
+		drawSection(g, headerCoreY,    Component.translatable("conduit.screen.host.section_core"));
+		drawSection(g, headerRulesY,   Component.translatable("conduit.screen.host.section_rules"));
+		drawSection(g, headerWorldY,   Component.translatable("conduit.screen.host.section_world"));
+		drawSection(g, headerServerY,  Component.translatable("conduit.screen.host.section_server"));
+		drawSection(g, headerAccountY, Component.translatable("conduit.screen.host.section_account"));
+
+		// Status line at the bottom
 		Component status = Component.translatable("conduit.screen.host.status",
 				statusLine != null ? statusLine : Component.literal("idle"));
-		g.centeredText(font, status, width / 2, height - 14, 0xFFFF55);
+		g.centeredText(font, status, cx, height - 14, 0xFFFF55);
+	}
+
+	private void drawSection(GuiGraphicsExtractor g, int y, Component label) {
+		int cx = width / 2;
+		int half = COL_W + COL_GAP / 2;
+		int lx = cx - half;
+		int rx = cx + half;
+		// Faint horizontal line to the left and right of the label.
+		g.fill(lx, y + 5, lx + 60, y + 6, 0x40FFFFFF);
+		g.fill(rx - 60, y + 5, rx, y + 6, 0x40FFFFFF);
+		g.centeredText(font, label, cx, y, 0xFFFFFF);
 	}
 
 	@Override

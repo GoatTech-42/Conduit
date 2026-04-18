@@ -1,18 +1,24 @@
 package com.goattech.conduit.client.screen;
 
+import com.goattech.conduit.ConduitMod;
 import com.goattech.conduit.client.ConduitClient;
 import com.goattech.conduit.client.ConduitController;
 import com.goattech.conduit.client.ConduitSessionHolder;
 import com.goattech.conduit.server.ServerBridge;
+import com.goattech.conduit.util.ConsoleLog;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.List;
 import java.util.Locale;
 import java.util.function.IntConsumer;
 
@@ -26,8 +32,11 @@ import java.util.function.IntConsumer;
  *       plus extended toggles (flight, spawn settings, advancements).</li>
  *   <li><b>Settings</b> &mdash; render/simulation distance, MOTD, broadcast /say,
  *       idle timeout, spawn protection, command blocks.</li>
- *   <li><b>Console</b> &mdash; merged playit + geyser log tail (auto-refreshing).</li>
- *   <li><b>Network</b> &mdash; public/local address, copy-to-clipboard, playit account status.</li>
+ *   <li><b>Console</b> &mdash; interleaved live log from the playit agent, Geyser, and
+ *       Conduit itself, with an input box at the bottom for typing server commands
+ *       (they run on the integrated server as if typed by an operator).</li>
+ *   <li><b>Network</b> &mdash; public/local address, copy-to-clipboard, playit account
+ *       status + full agent controls (link / unlink / reset / show secret path).</li>
  * </ul>
  *
  * <p>All rendering uses the 26.1 {@link GuiGraphicsExtractor} API. The layout is built
@@ -37,6 +46,7 @@ public class AdminPanelScreen extends Screen {
 
 	private enum Tab { PLAYERS, WORLD, SETTINGS, CONSOLE, NETWORK }
 
+	// ── Layout constants ────────────────────────────────────────────────────
 	private static final int TAB_HEIGHT  = 20;
 	private static final int TAB_GAP     = 4;
 	private static final int HEADER_Y    = 28;
@@ -47,19 +57,32 @@ public class AdminPanelScreen extends Screen {
 	private static final int COL_GAP = 6;
 	private static final int ROW_H   = 24;
 
+	/** Line height for the console text area. */
+	private static final int CONSOLE_LINE_H = 10;
+
 	private final Screen parent;
 	private Tab activeTab = Tab.PLAYERS;
 
-	// Settings tab widgets
+	// ── Widgets ──
 	private EditBox sayBox;
 	private EditBox motdBox;
-
-	// Players tab widgets
 	private EditBox whitelistAddBox;
 
-	// Console tab auto-refresh
-	private String consoleSnapshot = "";
-	private long lastConsoleRefresh;
+	// Console tab widgets
+	private EditBox consoleInput;
+	private Button consoleSendBtn;
+
+	// ── Console state ──
+	/** Lines currently displayed, derived from {@link ConsoleLog}. */
+	private final java.util.ArrayList<ConsoleLog.Entry> consoleView = new java.util.ArrayList<>();
+	/** How many lines up the user has scrolled (0 = pinned to the tail). */
+	private int consoleScrollOffset = 0;
+	/** Input history (↑/↓ to recall previous commands). */
+	private final Deque<String> commandHistory = new ArrayDeque<>();
+	private int historyCursor = -1;
+	/** The id of the last entry rendered, used to detect new lines for auto-scroll. */
+	private long lastSeenConsoleId = 0;
+	private long lastConsolePoll;
 
 	private static final String[] GAME_MODES = {"survival", "creative", "adventure", "spectator"};
 	private static final String[] DIFFICULTIES = {"peaceful", "easy", "normal", "hard"};
@@ -84,7 +107,7 @@ public class AdminPanelScreen extends Screen {
 		// Tab bar — centered
 		Tab[] tabs = Tab.values();
 		int tabCount = tabs.length;
-		int tabWidth = Math.min(72, (width - 140) / tabCount - TAB_GAP);
+		int tabWidth = Math.min(76, (width - 140) / tabCount - TAB_GAP);
 		int totalTabW = tabCount * tabWidth + (tabCount - 1) * TAB_GAP;
 		int tabStartX = cx - totalTabW / 2;
 
@@ -92,7 +115,7 @@ public class AdminPanelScreen extends Screen {
 		for (Tab tab : tabs) {
 			Button btn = Button.builder(
 							Component.translatable("conduit.screen.admin.tab."
-									+ tab.name().toLowerCase()),
+									+ tab.name().toLowerCase(Locale.ROOT)),
 							b -> { activeTab = tab; rebuild(); })
 					.bounds(tx, HEADER_Y, tabWidth, TAB_HEIGHT)
 					.build();
@@ -114,7 +137,7 @@ public class AdminPanelScreen extends Screen {
 			case PLAYERS  -> buildPlayersTab(CONTENT_Y);
 			case WORLD    -> buildWorldTab(CONTENT_Y);
 			case SETTINGS -> buildSettingsTab(CONTENT_Y);
-			case CONSOLE  -> refreshConsole();
+			case CONSOLE  -> buildConsoleTab();
 			case NETWORK  -> buildNetworkTab(CONTENT_Y);
 		}
 	}
@@ -158,6 +181,7 @@ public class AdminPanelScreen extends Screen {
 							String name = whitelistAddBox.getValue().strip();
 							if (!name.isEmpty()) {
 								srv.addToWhitelistByName(name);
+								ConduitMod.console().info("Added '" + name + "' to whitelist");
 								whitelistAddBox.setValue("");
 							}
 						})
@@ -311,7 +335,10 @@ public class AdminPanelScreen extends Screen {
 		// Save-all (centered)
 		addRenderableWidget(Button.builder(
 						Component.translatable("conduit.screen.admin.save_all"),
-						b -> srv.saveAll())
+						b -> {
+							srv.saveAll();
+							ConduitMod.console().info("/save-all issued");
+						})
 				.bounds(width / 2 - 100, y, 200, 20).build());
 	}
 
@@ -367,6 +394,7 @@ public class AdminPanelScreen extends Screen {
 							srv.setMotd(m);
 							cfg.motd = m;
 							ConduitClient.get().config().save();
+							ConduitMod.console().info("MOTD set to '" + m + "'");
 						})
 				.bounds(lx + fw - setW, y, setW, 20).build());
 		y += ROW_H;
@@ -388,12 +416,127 @@ public class AdminPanelScreen extends Screen {
 
 	// ── Console tab ──────────────────────────────────────────────────────────
 
-	private void refreshConsole() {
-		var sb = new StringBuilder();
-		for (String line : ConduitClient.get().playit().logTail(30))  sb.append(line).append('\n');
-		for (String line : ConduitClient.get().geyser().logTail(20))  sb.append(line).append('\n');
-		consoleSnapshot = sb.toString();
-		lastConsoleRefresh = System.currentTimeMillis();
+	private void buildConsoleTab() {
+		int lx = colL();
+		int fw = fullW();
+
+		// Input bar sits at the bottom — everything above it is text.
+		int inputY = height - 56;
+		int btnW = 56;
+
+		consoleInput = new EditBox(font, lx, inputY, fw - btnW - COL_GAP, 20,
+				Component.translatable("conduit.screen.admin.console_input_hint")) {
+			@Override
+			public boolean keyPressed(KeyEvent event) {
+				// 264 = DOWN, 265 = UP  (GLFW)
+				int keyCode = event.key();
+				if (keyCode == 265) { recallHistory(-1); return true; }
+				if (keyCode == 264) { recallHistory(+1); return true; }
+				return super.keyPressed(event);
+			}
+		};
+		consoleInput.setMaxLength(256);
+		consoleInput.setHint(Component.translatable("conduit.screen.admin.console_input_hint"));
+		addRenderableWidget(consoleInput);
+		setInitialFocus(consoleInput);
+
+		consoleSendBtn = Button.builder(
+						Component.translatable("conduit.screen.admin.console_send"),
+						b -> submitConsoleCommand())
+				.bounds(lx + fw - btnW, inputY, btnW, 20)
+				.build();
+		addRenderableWidget(consoleSendBtn);
+
+		// Row beneath the input: clear, pause-autoscroll, copy-all
+		int toolY = inputY + 24;
+		int toolW = (fw - COL_GAP * 2) / 3;
+
+		addRenderableWidget(Button.builder(
+						Component.translatable("conduit.screen.admin.console_clear"),
+						b -> {
+							ConsoleLog.INSTANCE.clear();
+							consoleScrollOffset = 0;
+							lastSeenConsoleId = 0;
+						})
+				.bounds(lx, toolY, toolW, 20).build());
+
+		addRenderableWidget(Button.builder(
+						Component.translatable("conduit.screen.admin.console_jump_end"),
+						b -> consoleScrollOffset = 0)
+				.bounds(lx + toolW + COL_GAP, toolY, toolW, 20).build());
+
+		addRenderableWidget(Button.builder(
+						Component.translatable("conduit.screen.admin.console_copy"),
+						b -> {
+							var sb = new StringBuilder();
+							for (ConsoleLog.Entry e : ConsoleLog.INSTANCE.tail(1000)) {
+								sb.append(e.formatted()).append('\n');
+							}
+							minecraft.keyboardHandler.setClipboard(sb.toString());
+							minecraft.gui.getChat().addClientSystemMessage(
+									Component.translatable("conduit.message.copied_logs"));
+						})
+				.bounds(lx + (toolW + COL_GAP) * 2, toolY, toolW, 20).build());
+	}
+
+	/** Push the current input to the history + dispatch it. */
+	private void submitConsoleCommand() {
+		String raw = consoleInput.getValue();
+		if (raw == null) return;
+		String cmd = raw.strip();
+		if (cmd.isEmpty()) return;
+
+		commandHistory.addFirst(cmd);
+		while (commandHistory.size() > 64) commandHistory.removeLast();
+		historyCursor = -1;
+
+		// Echo the typed line into the console.
+		ConduitMod.console().append("you", "> " + cmd);
+
+		// Decide whether this is a playit instruction or a server command.
+		// Lines that start with `playit ` are sent to the agent's stdin (if
+		// it's running). Everything else is treated as a vanilla server
+		// command; the UI strips the leading slash.
+		if (cmd.toLowerCase(Locale.ROOT).startsWith("playit ")) {
+			String tail = cmd.substring("playit ".length()).strip();
+			boolean sent = ConduitClient.get().playit().writeStdin(tail);
+			if (!sent) {
+				ConduitMod.console().warn(
+						"playit agent is not running; cannot forward '" + tail + "'");
+			}
+		} else {
+			boolean ok = ConduitClient.get().server().runConsoleCommand(cmd);
+			if (!ok) {
+				ConduitMod.console().warn(
+						"No integrated server is running; cannot execute '" + cmd + "'");
+			}
+		}
+
+		consoleInput.setValue("");
+		consoleScrollOffset = 0; // jump to tail after sending.
+	}
+
+	/** Navigate ↑/↓ through recent commands. Direction: -1 = older, +1 = newer. */
+	private void recallHistory(int direction) {
+		if (commandHistory.isEmpty()) return;
+		int max = commandHistory.size();
+		if (direction < 0) {
+			historyCursor = Math.min(historyCursor + 1, max - 1);
+		} else {
+			historyCursor = Math.max(historyCursor - 1, -1);
+		}
+		if (historyCursor < 0) {
+			consoleInput.setValue("");
+			return;
+		}
+		// The deque is addFirst'd, so index 0 == most recent.
+		var iter = commandHistory.iterator();
+		String value = "";
+		for (int i = 0; i <= historyCursor && iter.hasNext(); i++) {
+			value = iter.next();
+		}
+		consoleInput.setValue(value);
+		consoleInput.moveCursorToEnd(false);
 	}
 
 	// ── Network tab ──────────────────────────────────────────────────────────
@@ -402,7 +545,7 @@ public class AdminPanelScreen extends Screen {
 		ConduitSessionHolder.SessionInfo info = ConduitClient.get().session().info();
 		int lx = colL();
 		int fw = fullW();
-		int y = y0 + 70; // leave room for the rendered stats above
+		int y = y0 + 80; // leave room for the rendered stats above
 
 		if (info != null && info.tunnelJavaAddress() != null) {
 			int btnW = (fw - COL_GAP) / 2;
@@ -429,7 +572,7 @@ public class AdminPanelScreen extends Screen {
 			y += ROW_H + 4;
 		}
 
-		// playit account status + link/unlink
+		// playit account controls
 		boolean linked = ConduitClient.get().playit().isLinkedAccount();
 
 		addRenderableWidget(Button.builder(
@@ -439,14 +582,56 @@ public class AdminPanelScreen extends Screen {
 						b -> {
 							if (linked) {
 								ConduitClient.get().playit().unlink();
+								ConduitMod.console().info("playit.gg account unlinked");
 								rebuild();
 							} else {
+								ConduitMod.console().info("Opening playit.gg link flow...");
 								ConduitClient.get().playit().linkAccountInteractiveAsync(url ->
 										minecraft.execute(() -> Util.getPlatform().openUri(url)))
 										.whenComplete((r, e) -> minecraft.execute(this::rebuild));
 							}
 						})
 				.bounds(lx, y, fw, 20).build());
+		y += ROW_H;
+
+		// Advanced playit commands row: Show secret path + Reset
+		int halfW = (fw - COL_GAP) / 2;
+		addRenderableWidget(Button.builder(
+						Component.translatable("conduit.screen.admin.playit_secret_path"),
+						b -> {
+							ConduitMod.console().info("Resolving playit secret-path...");
+							ConduitClient.get().playit().secretPathAsync()
+									.whenComplete((out, err) -> {
+										if (err != null) {
+											ConduitMod.console().warn(
+													"secret-path failed: " + err.getMessage());
+										} else {
+											ConduitMod.console().info(
+													"secret-path: " + (out == null ? "(no output)" : out));
+										}
+									});
+						})
+				.bounds(lx, y, halfW, 20).build());
+
+		addRenderableWidget(Button.builder(
+						Component.translatable("conduit.screen.admin.playit_reset"),
+						b -> {
+							ConduitMod.console().warn("Resetting playit agent state...");
+							ConduitClient.get().playit().resetAgentAsync()
+									.whenComplete((out, err) -> {
+										if (err != null) {
+											ConduitMod.console().warn(
+													"reset failed: " + err.getMessage());
+										} else {
+											ConduitMod.console().info("playit reset complete.");
+											if (out != null && !out.isBlank()) {
+												ConduitMod.console().append("playit", out);
+											}
+											minecraft.execute(this::rebuild);
+										}
+									});
+						})
+				.bounds(lx + halfW + COL_GAP, y, halfW, 20).build());
 	}
 
 	// ── Rendering ────────────────────────────────────────────────────────────
@@ -456,17 +641,11 @@ public class AdminPanelScreen extends Screen {
 		super.extractRenderState(g, mx, my, dt);
 		g.centeredText(font, title, width / 2, 6, 0xFFFFFF);
 
-		// Subtitle: hosting state + player count
+		// Subtitle: player count
 		ServerBridge srv = ConduitClient.get().server();
 		Component sub = Component.translatable("conduit.screen.admin.player_count",
 				srv.playerCount(), srv.maxPlayers());
 		g.centeredText(font, sub, width / 2, 17, 0xAAAAAA);
-
-		// Auto-refresh console once per second while on the console tab.
-		if (activeTab == Tab.CONSOLE
-				&& System.currentTimeMillis() - lastConsoleRefresh > 1000) {
-			refreshConsole();
-		}
 
 		switch (activeTab) {
 			case CONSOLE -> renderConsole(g);
@@ -478,15 +657,72 @@ public class AdminPanelScreen extends Screen {
 	}
 
 	private void renderConsole(GuiGraphicsExtractor g) {
-		int y = CONTENT_Y;
-		int maxLines = Math.max(8, (height - CONTENT_Y - 20) / 10);
-		String[] lines = consoleSnapshot.split("\n");
-		int from = Math.max(0, lines.length - maxLines);
-		for (int i = from; i < lines.length; i++) {
-			g.text(font, lines[i], colL(), y, 0x9EB9FF, false);
-			y += 10;
-			if (y > height - 10) break;
+		int lx = colL();
+		int fw = fullW();
+		int top = CONTENT_Y;
+		int bottom = height - 60;
+		int maxLines = Math.max(6, (bottom - top) / CONSOLE_LINE_H);
+
+		// Poll at ~10 Hz to pick up new lines.
+		long now = System.currentTimeMillis();
+		if (now - lastConsolePoll > 100) {
+			lastConsolePoll = now;
+			List<ConsoleLog.Entry> snapshot = ConsoleLog.INSTANCE.tail(Math.max(maxLines + 200, 500));
+			consoleView.clear();
+			consoleView.addAll(snapshot);
+			lastSeenConsoleId = ConsoleLog.INSTANCE.latestId();
 		}
+
+		int total = consoleView.size();
+		int end = total - consoleScrollOffset;
+		int start = Math.max(0, end - maxLines);
+
+		// Background panel for readability.
+		g.fill(lx - 2, top - 2, lx + fw + 2, bottom + 2, 0x80000000);
+
+		int y = top;
+		for (int i = start; i < end && y + CONSOLE_LINE_H <= bottom; i++) {
+			ConsoleLog.Entry e = consoleView.get(i);
+			int color = colorFor(e.source());
+			// Wrap long lines naively so we don't spill off the right edge.
+			String text = truncate(e.formatted(), fw - 4);
+			g.text(font, text, lx, y, color, false);
+			y += CONSOLE_LINE_H;
+		}
+
+		// Small scrollback indicator in the bottom-right.
+		if (consoleScrollOffset > 0) {
+			Component indicator = Component.translatable(
+					"conduit.screen.admin.console_scrollback", consoleScrollOffset);
+			g.text(font, indicator, lx + fw - font.width(indicator) - 4, bottom - 10,
+					0xFFAA55, false);
+		}
+
+		// Hint row
+		String hint = "\u00A78playit <cmd> -> agent stdin   \u00A77|   <cmd> -> /server command";
+		g.text(font, Component.literal(hint), lx, bottom + 2, 0x777777, false);
+	}
+
+	private int colorFor(String source) {
+		return switch (source == null ? "" : source) {
+			case "playit"   -> 0x9EB9FF; // light blue
+			case "geyser"   -> 0x66FFAA; // mint
+			case "you"      -> 0xFFDD55; // yellow
+			case "conduit"  -> 0xCCCCCC; // grey
+			case "warn"     -> 0xFFAA55; // orange
+			case "error"    -> 0xFF5555; // red
+			default         -> 0xFFFFFF;
+		};
+	}
+
+	private String truncate(String s, int maxPx) {
+		int w = font.width(s);
+		if (w <= maxPx) return s;
+		String ell = "\u2026";
+		while (s.length() > 1 && font.width(s + ell) > maxPx) {
+			s = s.substring(0, s.length() - 1);
+		}
+		return s + ell;
 	}
 
 	private void renderNetwork(GuiGraphicsExtractor g) {
@@ -526,6 +762,16 @@ public class AdminPanelScreen extends Screen {
 					? Component.translatable("conduit.screen.admin.account_linked").getString()
 					: Component.translatable("conduit.screen.admin.account_guest").getString(),
 					valueX, y, linked ? 0x55FF55 : 0xFFAA55, false);
+			y += 14;
+
+			// Show tunnel status (running vs idle).
+			boolean agentUp = ConduitClient.get().playit().isRunning();
+			g.text(font, Component.translatable("conduit.screen.admin.agent_status"),
+					labelX, y, 0xAAFFFF, false);
+			g.text(font, agentUp
+					? Component.translatable("conduit.screen.admin.agent_running").getString()
+					: Component.translatable("conduit.screen.admin.agent_idle").getString(),
+					valueX, y, agentUp ? 0x55FF55 : 0xAAAAAA, false);
 		} else {
 			g.text(font, Component.translatable("conduit.screen.manage.empty"),
 					lx, y, 0xAAAAAA, false);
@@ -550,6 +796,46 @@ public class AdminPanelScreen extends Screen {
 						displayName(srv.currentDifficulty()),
 						displayName(srv.currentGameMode())),
 				width / 2, y, 0xAAAAAA);
+	}
+
+	// ── Input forwarding ─────────────────────────────────────────────────────
+
+	@Override
+	public boolean keyPressed(KeyEvent event) {
+		int keyCode = event.key();
+		// Console tab: Enter submits, mousewheel/PgUp/PgDn scroll back.
+		if (activeTab == Tab.CONSOLE) {
+			// 257 = ENTER, 335 = KP_ENTER, 266 = PAGE_UP, 267 = PAGE_DOWN
+			if ((keyCode == 257 || keyCode == 335)
+					&& consoleInput != null && consoleInput.isFocused()) {
+				submitConsoleCommand();
+				return true;
+			}
+			if (keyCode == 266) {
+				consoleScrollOffset = Math.min(consoleScrollOffset + 10, consoleView.size());
+				return true;
+			}
+			if (keyCode == 267) {
+				consoleScrollOffset = Math.max(consoleScrollOffset - 10, 0);
+				return true;
+			}
+		}
+		return super.keyPressed(event);
+	}
+
+	@Override
+	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+		if (activeTab == Tab.CONSOLE) {
+			int step = 3;
+			if (scrollY > 0) {
+				consoleScrollOffset = Math.min(consoleScrollOffset + step,
+						Math.max(0, consoleView.size() - 4));
+			} else if (scrollY < 0) {
+				consoleScrollOffset = Math.max(consoleScrollOffset - step, 0);
+			}
+			return true;
+		}
+		return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
 	}
 
 	@Override
