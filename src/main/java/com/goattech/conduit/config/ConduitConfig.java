@@ -50,6 +50,20 @@ public final class ConduitConfig {
 		public String defaultGameMode = "survival";
 		/** MOTD shown in the multiplayer server list. */
 		public String motd = "A Conduit-hosted world";
+
+		// ── Extended server settings ──
+		public int spawnProtection = 0;
+		public boolean allowFlight = false;
+		public boolean forceGameMode = false;
+		public boolean allowNether = true;
+		public boolean spawnNpcs = true;
+		public boolean spawnAnimals = true;
+		public boolean spawnMonsters = true;
+		public boolean announceAdvancements = true;
+		public int playerIdleTimeout = 0;
+		public boolean enableCommandBlock = false;
+		public int maxWorldSize = 29999984;
+		public int entityBroadcastRange = 100;
 	}
 
 	private final Values values = new Values();
@@ -116,7 +130,19 @@ public final class ConduitConfig {
 				  "defaultAllowCheats": %b,
 				  "defaultDifficulty": "%s",
 				  "defaultGameMode": "%s",
-				  "motd": "%s"
+				  "motd": "%s",
+				  "spawnProtection": %d,
+				  "allowFlight": %b,
+				  "forceGameMode": %b,
+				  "allowNether": %b,
+				  "spawnNpcs": %b,
+				  "spawnAnimals": %b,
+				  "spawnMonsters": %b,
+				  "announceAdvancements": %b,
+				  "playerIdleTimeout": %d,
+				  "enableCommandBlock": %b,
+				  "maxWorldSize": %d,
+				  "entityBroadcastRange": %d
 				}
 				""".formatted(
 				escape(v.playitSecretKey),
@@ -132,7 +158,19 @@ public final class ConduitConfig {
 				v.defaultAllowCheats,
 				escape(v.defaultDifficulty),
 				escape(v.defaultGameMode),
-				escape(v.motd)
+				escape(v.motd),
+				v.spawnProtection,
+				v.allowFlight,
+				v.forceGameMode,
+				v.allowNether,
+				v.spawnNpcs,
+				v.spawnAnimals,
+				v.spawnMonsters,
+				v.announceAdvancements,
+				v.playerIdleTimeout,
+				v.enableCommandBlock,
+				v.maxWorldSize,
+				v.entityBroadcastRange
 		);
 	}
 
@@ -196,6 +234,18 @@ public final class ConduitConfig {
 					case "defaultDifficulty"        -> v.defaultDifficulty = stripQuotes(val);
 					case "defaultGameMode"          -> v.defaultGameMode = stripQuotes(val);
 					case "motd"                     -> v.motd = stripQuotes(val);
+					case "spawnProtection"          -> v.spawnProtection = Integer.parseInt(val);
+					case "allowFlight"              -> v.allowFlight = Boolean.parseBoolean(val);
+					case "forceGameMode"            -> v.forceGameMode = Boolean.parseBoolean(val);
+					case "allowNether"              -> v.allowNether = Boolean.parseBoolean(val);
+					case "spawnNpcs"                -> v.spawnNpcs = Boolean.parseBoolean(val);
+					case "spawnAnimals"             -> v.spawnAnimals = Boolean.parseBoolean(val);
+					case "spawnMonsters"            -> v.spawnMonsters = Boolean.parseBoolean(val);
+					case "announceAdvancements"     -> v.announceAdvancements = Boolean.parseBoolean(val);
+					case "playerIdleTimeout"        -> v.playerIdleTimeout = Integer.parseInt(val);
+					case "enableCommandBlock"       -> v.enableCommandBlock = Boolean.parseBoolean(val);
+					case "maxWorldSize"             -> v.maxWorldSize = Integer.parseInt(val);
+					case "entityBroadcastRange"     -> v.entityBroadcastRange = Integer.parseInt(val);
 					default -> { /* forward-compatible: ignore unknown keys */ }
 				}
 			} catch (NumberFormatException ignored) {

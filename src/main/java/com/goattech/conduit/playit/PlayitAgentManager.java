@@ -29,21 +29,33 @@ import java.util.regex.Pattern;
  *
  * <p>The raw binary is downloaded from GitHub releases into
  * {@code <gameDir>/conduit/bin/} and executed directly &mdash; no admin privileges, no
- * service install, fully portable. Authentication is handled via the
- * {@code PLAYIT_SECRET} environment variable.
+ * service install, fully portable. Authentication is handled via the agent's own
+ * config directory ({@code PLAYIT_CONFIG_HOME}).
  *
  * <p>Conduit supports three modes:
  * <ol>
  *   <li><b>Guest mode (default)</b> &mdash; no playit.gg account is required. Conduit
- *       asks the agent to create a throw-away secret (stored in {@code conduit.json}) and
- *       a free anonymous tunnel. Most users never need anything more.</li>
- *   <li><b>Auto-link</b> &mdash; the user clicks "Link playit.gg Account". Conduit starts
- *       the agent in setup mode, captures the {@code playit.gg/claim/<code>} URL it prints,
- *       opens it in the user's browser, and the agent completes the exchange on its own
- *       as soon as the user clicks "Accept" on the web page.</li>
+ *       runs the agent headlessly; the agent self-provisions a secret on its very first
+ *       run. The secret path is discovered via {@code playit secret-path} and persisted
+ *       in {@code conduit.json} for subsequent launches.</li>
+ *   <li><b>Auto-link</b> &mdash; the user clicks "Link playit.gg Account". Conduit runs
+ *       the agent interactively, captures the {@code playit.gg/claim/<code>} URL it
+ *       prints, and opens it in the user's browser. The agent completes the exchange on
+ *       its own as soon as the user clicks "Accept" on the web page.</li>
  *   <li><b>Manual claim code</b> &mdash; the user can paste a claim code from
  *       {@code playit.gg/claim} and Conduit runs {@code playit claim exchange} directly.</li>
  * </ol>
+ *
+ * <h3>playit v0.17.x CLI reference</h3>
+ * The v0.17 agent has the following subcommands:
+ * <ul>
+ *   <li>{@code playit} or {@code playit start} &mdash; run the agent (auto-provisions on
+ *       first use; generates a secret + tunnel automatically).</li>
+ *   <li>{@code playit reset} &mdash; clear local state.</li>
+ *   <li>{@code playit secret-path} &mdash; print the path to the stored secret file.</li>
+ * </ul>
+ * <p><strong>There is no {@code secret generate} or {@code secret new} subcommand.</strong>
+ * Guest provisioning is done by simply launching the agent and letting it self-configure.
  */
 public final class PlayitAgentManager {
 
@@ -63,12 +75,16 @@ public final class PlayitAgentManager {
 	private static final Pattern TUNNEL_LINE = Pattern.compile(
 			"(?i)(?:tcp|udp)[^\\n]*?(?:tunnel|ready|->)[^\\n]*?" +
 			"([A-Za-z0-9.-]+):(\\d+)\\s*->\\s*(?:127\\.0\\.0\\.1|localhost):(\\d+)");
+
+	/*
+	 * Broader tunnel fallback: some agent versions print something like
+	 *   "address = xxx.gl.joinmc.link:12345" or "tunnel address: host:port"
+	 */
+	private static final Pattern TUNNEL_ADDRESS_LINE = Pattern.compile(
+			"(?i)(?:address|tunnel|assigned)[^\\n]*?([A-Za-z0-9.-]+\\.(?:ply\\.gg|joinmc\\.link|at\\.playit\\.gg)):(\\d+)");
+
 	private static final Pattern CLAIM_URL = Pattern.compile(
 			"(?i)(https?://(?:www\\.)?playit\\.gg/(?:claim|mc)(?:/[A-Za-z0-9-]+)?)");
-	private static final Pattern CLAIM_PATH_CODE = Pattern.compile(
-			"(?i)playit\\.gg/(?:claim|mc)/([A-Za-z0-9-]{4,64})");
-	private static final Pattern CLAIM_TOKEN = Pattern.compile(
-			"(?i)(?:claim(?:\\s*code)?|code)\\D{0,12}([A-Za-z0-9-]{4,64})");
 	private static final Pattern SECRET_LINE = Pattern.compile(
 			"(?i)(?:secret[_\\s-]?key|agent[_\\s-]?secret)\\D{0,8}([0-9a-fA-F]{32,128})");
 
@@ -156,74 +172,200 @@ public final class PlayitAgentManager {
 
 	/**
 	 * Ensures a local secret exists. If the config already has one (linked or guest), this
-	 * is a no-op. Otherwise Conduit asks the agent to generate an anonymous secret so the
-	 * user can host immediately without ever visiting playit.gg.
+	 * is a no-op. Otherwise, Conduit provisions a guest secret by:
 	 *
-	 * <p>The underlying command is {@code playit secret generate} (newer agents) or
-	 * {@code playit setup --no-login} (older agents); both produce a 32&ndash;128 hex
-	 * secret on stdout.
+	 * <ol>
+	 *   <li>First, trying {@code playit secret-path} to discover if the agent already has
+	 *       a local secret on disk. If so, we read and cache it.</li>
+	 *   <li>If no secret exists yet, we launch the agent briefly with {@code playit start}
+	 *       (or bare {@code playit}) in the background. The agent auto-provisions a guest
+	 *       secret on first run. We wait for it to write the secret, read it back via
+	 *       {@code secret-path}, then terminate the bootstrap run.</li>
+	 * </ol>
+	 *
+	 * <p><strong>This replaces the previous (broken) calls to {@code secret generate} and
+	 * {@code secret new}, which do not exist in playit v0.17.x.</strong>
 	 */
 	public CompletableFuture<Void> ensureGuestSecretAsync() {
 		if (hasSecret()) {
 			return CompletableFuture.completedFuture(null);
 		}
 		return ensureBinaryAsync().thenCompose(bin -> CompletableFuture.supplyAsync(() -> {
-			String[][] attempts = {
-					{"secret", "generate"},
-					{"secret", "new"},
-					{"setup", "--no-login"},
-			};
-			List<String> diagnostics = new ArrayList<>();
-			for (String[] args : attempts) {
-				try {
-					CommandResult r = runCommand(bin, args);
-					String secret = extractSecret(r.output());
+			Path dataDir = prepareDataDir();
+
+			// ── Attempt 1: check if a secret already exists on disk ──
+			String existingSecret = readSecretViaSecretPath(bin, dataDir);
+			if (existingSecret != null) {
+				config.values().playitSecretKey = existingSecret;
+				config.values().playitGuestMode = true;
+				config.save();
+				ConduitMod.LOGGER.info("Found existing playit secret ({} chars)", existingSecret.length());
+				return null;
+			}
+
+			// ── Also check the data dir TOML files directly ──
+			existingSecret = readSecretFromDataDir(dataDir);
+			if (existingSecret != null) {
+				config.values().playitSecretKey = existingSecret;
+				config.values().playitGuestMode = true;
+				config.save();
+				ConduitMod.LOGGER.info("Found existing playit secret from TOML ({} chars)", existingSecret.length());
+				return null;
+			}
+
+			// ── Attempt 2: launch the agent briefly to auto-provision ──
+			ConduitMod.LOGGER.info("No playit secret found; launching agent for guest provisioning...");
+			Process bootstrap = null;
+			try {
+				ProcessBuilder pb = new ProcessBuilder(bin.toAbsolutePath().toString())
+						.redirectErrorStream(true);
+				pb.environment().put("PLAYIT_CONFIG_HOME", dataDir.toString());
+
+				bootstrap = pb.start();
+
+				// Read output, looking for the agent to report it's ready (tunnel line,
+				// "ready", "listening", claim URL). Give it up to 30 s.
+				long deadline = System.currentTimeMillis() + 30_000;
+				BufferedReader reader = new BufferedReader(
+						new InputStreamReader(bootstrap.getInputStream(), StandardCharsets.UTF_8));
+				Thread pumpThread = Thread.ofVirtual().name("conduit-playit-bootstrap").start(() -> {
+					try {
+						String line;
+						while ((line = reader.readLine()) != null) {
+							appendLog("[bootstrap] " + line);
+						}
+					} catch (IOException ignored) {}
+				});
+
+				// Wait for a secret to appear on disk.
+				while (System.currentTimeMillis() < deadline) {
+					Thread.sleep(1_000);
+					String secret = readSecretViaSecretPath(bin, dataDir);
+					if (secret == null) {
+						secret = readSecretFromDataDir(dataDir);
+					}
 					if (secret != null) {
 						config.values().playitSecretKey = secret;
 						config.values().playitGuestMode = true;
 						config.save();
-						ConduitMod.LOGGER.info("Generated guest playit secret ({} chars)", secret.length());
+						ConduitMod.LOGGER.info("Guest provisioning complete ({} chars)", secret.length());
 						return null;
 					}
-					diagnostics.add("playit " + String.join(" ", args)
-							+ " (exit=" + r.exitCode() + "):\n" + r.output().strip());
-				} catch (IOException | InterruptedException e) {
-					Thread.currentThread().interrupt();
-					diagnostics.add("playit " + String.join(" ", args) + " threw: " + e.getMessage());
+					if (!bootstrap.isAlive()) {
+						break;
+					}
+				}
+
+				// Final attempt after the agent may have written and exited.
+				String secret = readSecretViaSecretPath(bin, dataDir);
+				if (secret == null) {
+					secret = readSecretFromDataDir(dataDir);
+				}
+				if (secret != null) {
+					config.values().playitSecretKey = secret;
+					config.values().playitGuestMode = true;
+					config.save();
+					return null;
+				}
+
+				throw new RuntimeException(
+						"Could not auto-provision a playit secret. The playit agent may "
+								+ "require an interactive setup on first use.\n\n"
+								+ "You can still click \"Link playit.gg Account\" to set up "
+								+ "your tunnel manually, or run 'playit' in a terminal to "
+								+ "complete the initial setup.");
+
+			} catch (IOException | InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new RuntimeException(
+						"Failed during guest provisioning: " + e.getMessage()
+								+ "\n\nYou can still click \"Link playit.gg Account\" to "
+								+ "link one manually.", e);
+			} finally {
+				if (bootstrap != null && bootstrap.isAlive()) {
+					bootstrap.destroy();
+					try { bootstrap.waitFor(3, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+					if (bootstrap.isAlive()) bootstrap.destroyForcibly();
 				}
 			}
-			throw new RuntimeException(
-					"Could not generate an anonymous playit secret. You can still click "
-							+ "\"Link playit.gg Account\" to link one manually.\n\n"
-							+ String.join("\n\n", diagnostics));
 		}));
+	}
+
+	/**
+	 * Run {@code playit secret-path} and read the file it points to.
+	 * Returns the hex secret if found, or {@code null}.
+	 */
+	private String readSecretViaSecretPath(Path bin, Path dataDir) {
+		try {
+			ProcessBuilder pb = new ProcessBuilder(
+					bin.toAbsolutePath().toString(), "secret-path")
+					.redirectErrorStream(true);
+			pb.environment().put("PLAYIT_CONFIG_HOME", dataDir.toString());
+
+			Process p = pb.start();
+			String output;
+			try (var reader = new BufferedReader(
+					new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+				output = reader.lines().reduce("", (a, b) -> a + "\n" + b).strip();
+			}
+			if (!p.waitFor(10, TimeUnit.SECONDS)) {
+				p.destroyForcibly();
+				return null;
+			}
+			if (p.exitValue() != 0 || output.isBlank()) {
+				return null;
+			}
+
+			appendLog("[secret-path] " + output);
+
+			// The output should be a file path; try to read it.
+			Path secretFile = Path.of(output.strip());
+			if (Files.isRegularFile(secretFile)) {
+				String content = Files.readString(secretFile, StandardCharsets.UTF_8).strip();
+				String secret = extractSecret(content);
+				if (secret != null) return secret;
+				// The file might just contain the raw hex.
+				if (content.matches("[0-9a-fA-F]{32,128}")) return content;
+			}
+		} catch (IOException | InterruptedException e) {
+			ConduitMod.LOGGER.debug("secret-path probe failed: {}", e.getMessage());
+		}
+		return null;
+	}
+
+	private Path prepareDataDir() {
+		Path dataDir = config.conduitDir().resolve("playit-data");
+		try {
+			Files.createDirectories(dataDir);
+		} catch (IOException e) {
+			throw new RuntimeException("Cannot create playit data directory", e);
+		}
+		return dataDir;
 	}
 
 	// ── Account linking ──────────────────────────────────────────────────────
 
 	/**
-	 * One-click linking: start the agent in setup mode, watch for the claim URL, open it
+	 * One-click linking: start the agent interactively, watch for the claim URL, open it
 	 * in the user's browser via {@code urlSink}, then wait until the agent reports that
 	 * the account has been linked. The generated secret is persisted on success.
 	 *
-	 * @param urlSink receives the {@code playit.gg/claim/&lt;code&gt;} URL as soon as the
+	 * @param urlSink receives the {@code playit.gg/claim/<code>} URL as soon as the
 	 *                agent prints it. Typically this opens the URL in the default browser.
 	 */
 	public CompletableFuture<LinkResult> linkAccountInteractiveAsync(Consumer<String> urlSink) {
 		return ensureBinaryAsync().thenCompose(bin -> CompletableFuture.supplyAsync(() -> {
 			Process p = null;
 			try {
-				Path dataDir = config.conduitDir().resolve("playit-data");
-				Files.createDirectories(dataDir);
+				Path dataDir = prepareDataDir();
 
+				// Start the agent normally; it will print a claim URL if not yet linked.
 				ProcessBuilder pb = new ProcessBuilder(
-						bin.toAbsolutePath().toString(),
-						"setup")
+						bin.toAbsolutePath().toString())
 						.redirectErrorStream(true);
 				pb.environment().put("PLAYIT_CONFIG_HOME", dataDir.toString());
 
 				p = pb.start();
-				AtomicReference<String> captured = new AtomicReference<>();
 				AtomicReference<String> foundUrl = new AtomicReference<>();
 				AtomicReference<String> foundSecret = new AtomicReference<>();
 
@@ -251,12 +393,27 @@ public final class PlayitAgentManager {
 							foundSecret.set(sec);
 							break;
 						}
+
+						// Check if a tunnel came up (means the agent is linked and running)
+						if (TUNNEL_LINE.matcher(line).find()
+								|| TUNNEL_ADDRESS_LINE.matcher(line).find()) {
+							// Agent is running with tunnels; it's linked. Read the secret.
+							String diskSecret = readSecretViaSecretPath(bin, dataDir);
+							if (diskSecret == null) diskSecret = readSecretFromDataDir(dataDir);
+							if (diskSecret != null) {
+								foundSecret.set(diskSecret);
+								break;
+							}
+						}
 					}
 				}
 
 				String secret = foundSecret.get();
 				if (secret == null) {
-					// Fall back to scanning the data dir — some agent versions only persist.
+					// Fall back to scanning the data dir.
+					secret = readSecretViaSecretPath(bin, dataDir);
+				}
+				if (secret == null) {
 					secret = readSecretFromDataDir(dataDir);
 				}
 				if (secret == null) {
@@ -351,8 +508,7 @@ public final class PlayitAgentManager {
 		cmd.addAll(List.of(args));
 
 		ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
-		Path dataDir = config.conduitDir().resolve("playit-data");
-		Files.createDirectories(dataDir);
+		Path dataDir = prepareDataDir();
 		pb.environment().put("PLAYIT_CONFIG_HOME", dataDir.toString());
 
 		Process p = pb.start();
@@ -363,7 +519,7 @@ public final class PlayitAgentManager {
 			String line;
 			while ((line = reader.readLine()) != null) {
 				output.append(line).append('\n');
-				appendLog("[claim] " + line);
+				appendLog("[cmd] " + line);
 			}
 		}
 
@@ -386,6 +542,10 @@ public final class PlayitAgentManager {
 	 * Start the playit agent and wait asynchronously for it to report a tunnel matching
 	 * {@code localPort}. If no secret is present yet this will auto-generate a guest
 	 * secret first &mdash; the user never has to sign up.
+	 *
+	 * <p>The agent is launched as {@code playit} (bare, no subcommand) or
+	 * {@code playit start}. The {@code PLAYIT_SECRET} env var is set if a secret is
+	 * known, and {@code PLAYIT_CONFIG_HOME} always points to our data directory.
 	 */
 	public CompletableFuture<PlayitTunnel> startAsync(int localPort, boolean alsoBedrockUdp) {
 		if (isRunning()) {
@@ -394,22 +554,19 @@ public final class PlayitAgentManager {
 		return ensureGuestSecretAsync()
 				.thenCompose(v -> ensureBinaryAsync())
 				.thenCompose(bin -> CompletableFuture.supplyAsync(() -> {
-			String secret = config.values().playitSecretKey;
-			if (secret == null || secret.isBlank()) {
-				throw new IllegalStateException(
-						"No playit secret available. This should have been auto-generated.");
-			}
 			try {
-				Path dataDir = config.conduitDir().resolve("playit-data");
-				Files.createDirectories(dataDir);
+				Path dataDir = prepareDataDir();
+				String secret = config.values().playitSecretKey;
 
-				ProcessBuilder pb = new ProcessBuilder(
-						bin.toAbsolutePath().toString(),
-						"launch",
-						"--secret", secret)
-						.redirectErrorStream(true);
+				List<String> cmd = new ArrayList<>();
+				cmd.add(bin.toAbsolutePath().toString());
+				// Use bare invocation (equivalent to 'start') — the most portable option.
+
+				ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
 				pb.environment().put("PLAYIT_CONFIG_HOME", dataDir.toString());
-				pb.environment().put("PLAYIT_SECRET", secret);
+				if (secret != null && !secret.isBlank()) {
+					pb.environment().put("PLAYIT_SECRET", secret);
+				}
 
 				Process p = pb.start();
 				process.set(p);
@@ -419,8 +576,8 @@ public final class PlayitAgentManager {
 						.name("conduit-playit-pump")
 						.start(() -> pumpOutput(p, localPort));
 
-				// Wait up to 30 s for a tunnel line.
-				long deadline = System.currentTimeMillis() + 30_000;
+				// Wait up to 45 s for a tunnel line (first run may need provisioning time).
+				long deadline = System.currentTimeMillis() + 45_000;
 				while (System.currentTimeMillis() < deadline) {
 					if (!p.isAlive()) {
 						throw new IOException(
@@ -467,6 +624,8 @@ public final class PlayitAgentManager {
 			String line;
 			while ((line = reader.readLine()) != null) {
 				appendLog("[playit] " + line);
+
+				// Try primary tunnel pattern.
 				Matcher m = TUNNEL_LINE.matcher(line);
 				if (m.find()) {
 					String host = m.group(1);
@@ -484,6 +643,21 @@ public final class PlayitAgentManager {
 					if (loc == expectedLocalPort) {
 						lastTunnel.set(tunnel);
 					}
+					continue;
+				}
+
+				// Try fallback address pattern for new agent output formats.
+				Matcher am = TUNNEL_ADDRESS_LINE.matcher(line);
+				if (am.find()) {
+					String host = am.group(1);
+					int pub = Integer.parseInt(am.group(2));
+					// Assume it maps to our expected local port.
+					var tunnel = new PlayitTunnel(
+							"auto-" + expectedLocalPort,
+							"Minecraft",
+							PlayitTunnel.Protocol.TCP,
+							host, pub, expectedLocalPort);
+					lastTunnel.set(tunnel);
 				}
 			}
 		} catch (IOException ignored) {
