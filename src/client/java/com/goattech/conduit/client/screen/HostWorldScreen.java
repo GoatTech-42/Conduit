@@ -8,6 +8,7 @@ import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.GameType;
 
 /**
@@ -22,6 +23,7 @@ public class HostWorldScreen extends Screen {
 
 	private EditBox claimCodeBox;
 	private Checkbox crossplayBox;
+	private Button fetchCodeButton;
 	private Button linkButton;
 	private Button startButton;
 	private Component statusLine = Component.translatable("conduit.status.idle");
@@ -42,6 +44,26 @@ public class HostWorldScreen extends Screen {
 		claimCodeBox.setMaxLength(64);
 		claimCodeBox.setHint(Component.translatable("conduit.screen.host.claim_code"));
 		addRenderableWidget(claimCodeBox);
+		y += 26;
+
+		// Claim-code helper actions
+		fetchCodeButton = Button.builder(
+						Component.translatable("conduit.screen.host.fetch_claim_code"),
+						b -> fetchClaimCode())
+				.bounds(cx - 150, y, 146, 20)
+				.build();
+		addRenderableWidget(fetchCodeButton);
+		addRenderableWidget(Button.builder(
+						Component.translatable("conduit.screen.host.open_claim_page"),
+						b -> openClaimPage())
+				.bounds(cx + 4, y, 146, 20)
+				.build());
+		y += 26;
+		addRenderableWidget(Button.builder(
+						Component.translatable("conduit.screen.host.paste_clipboard"),
+						b -> pasteClaimCodeFromClipboard())
+				.bounds(cx - 100, y, 200, 20)
+				.build());
 		y += 26;
 
 		// Link account button
@@ -94,25 +116,87 @@ public class HostWorldScreen extends Screen {
 	private void linkAccount() {
 		String code = claimCodeBox.getValue().strip();
 		if (code.isEmpty()) {
-			statusLine = Component.literal(
-					"Paste your claim code from https://playit.gg/claim first.");
+			statusLine = Component.translatable("conduit.screen.host.need_claim_code");
 			return;
 		}
 		statusLine = Component.translatable("conduit.status.linking");
-		linkButton.active = false;
+		setClaimActionsActive(false);
 
 		ConduitClient.get().playit().linkAccountAsync(code)
 				.whenComplete((secret, err) -> minecraft.execute(() -> {
 					if (err != null) {
-						statusLine = Component.literal("Link failed: " + err.getMessage());
-						linkButton.active = true;
+						statusLine = Component.literal("Link failed: " + rootMessage(err));
+						setClaimActionsActive(true);
 					} else {
 						statusLine = Component.translatable("conduit.screen.host.linked");
 						linkButton.setMessage(
 								Component.translatable("conduit.screen.host.linked"));
+						linkButton.active = false;
+						fetchCodeButton.active = false;
 						startButton.active = true;
 					}
 				}));
+	}
+
+	private void fetchClaimCode() {
+		statusLine = Component.translatable("conduit.screen.host.fetching_claim_code");
+		setClaimActionsActive(false);
+
+		ConduitClient.get().playit().fetchClaimCodeAsync()
+				.whenComplete((info, err) -> minecraft.execute(() -> {
+					if (err != null) {
+						statusLine = Component.literal("Claim code fetch failed: " + rootMessage(err));
+						setClaimActionsActive(true);
+						return;
+					}
+
+					if (info.claimCode() != null && !info.claimCode().isBlank()) {
+						claimCodeBox.setValue(info.claimCode().strip());
+						claimCodeBox.setCursorPosition(claimCodeBox.getValue().length());
+					}
+
+					if (info.claimUrl() != null && !info.claimUrl().isBlank()) {
+						Util.getPlatform().openUri(info.claimUrl());
+						statusLine = Component.translatable("conduit.screen.host.claim_code_ready_with_url");
+					} else {
+						statusLine = Component.translatable("conduit.screen.host.claim_code_ready");
+					}
+					setClaimActionsActive(true);
+				}));
+	}
+
+	private void openClaimPage() {
+		Util.getPlatform().openUri("https://playit.gg/claim");
+		statusLine = Component.translatable("conduit.screen.host.claim_page_opened");
+	}
+
+	private void pasteClaimCodeFromClipboard() {
+		String clipboard = minecraft.keyboardHandler.getClipboard();
+		if (clipboard == null || clipboard.isBlank()) {
+			statusLine = Component.translatable("conduit.screen.host.clipboard_empty");
+			return;
+		}
+		claimCodeBox.setValue(clipboard.strip());
+		claimCodeBox.setCursorPosition(claimCodeBox.getValue().length());
+		statusLine = Component.translatable("conduit.screen.host.clipboard_pasted");
+	}
+
+	private void setClaimActionsActive(boolean active) {
+		if (fetchCodeButton != null) {
+			fetchCodeButton.active = active;
+		}
+		if (linkButton != null && !isAccountLinked()) {
+			linkButton.active = active;
+		}
+	}
+
+	private static String rootMessage(Throwable t) {
+		Throwable cur = t;
+		while (cur.getCause() != null) {
+			cur = cur.getCause();
+		}
+		String msg = cur.getMessage();
+		return (msg == null || msg.isBlank()) ? cur.getClass().getSimpleName() : msg;
 	}
 
 	private void startHosting() {

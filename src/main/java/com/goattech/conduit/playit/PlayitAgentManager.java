@@ -49,6 +49,12 @@ public final class PlayitAgentManager {
 	private static final Pattern TUNNEL_LINE = Pattern.compile(
 			"(?i)(?:tcp|udp)[^\\n]*?(?:tunnel|ready|->)[^\\n]*?" +
 			"([A-Za-z0-9.-]+):(\\d+)\\s*->\\s*(?:127\\.0\\.0\\.1|localhost):(\\d+)");
+	private static final Pattern CLAIM_URL = Pattern.compile(
+			"(?i)(https?://(?:www\\.)?playit\\.gg/claim(?:/[A-Za-z0-9-]+)?)");
+	private static final Pattern CLAIM_PATH_CODE = Pattern.compile(
+			"(?i)playit\\.gg/claim/([A-Za-z0-9-]{4,64})");
+	private static final Pattern CLAIM_TOKEN = Pattern.compile(
+			"(?i)(?:claim(?:\\s*code)?|code)\\D{0,12}([A-Za-z0-9-]{4,64})");
 
 	private final ConduitConfig config;
 	private final CopyOnWriteArrayList<String> logBuffer = new CopyOnWriteArrayList<>();
@@ -128,26 +134,10 @@ public final class PlayitAgentManager {
 	public CompletableFuture<String> linkAccountAsync(String claimCode) {
 		return ensureBinaryAsync().thenCompose(bin -> CompletableFuture.supplyAsync(() -> {
 			try {
-				ProcessBuilder pb = new ProcessBuilder(
-						bin.toAbsolutePath().toString(),
-						"claim", "exchange", claimCode)
-						.redirectErrorStream(true);
-				Process p = pb.start();
+				CommandResult result = runCommand(bin, "claim", "exchange", claimCode);
+				String output = result.output();
 
-				var output = new StringBuilder();
-				try (var reader = new BufferedReader(
-						new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
-					String line;
-					while ((line = reader.readLine()) != null) {
-						output.append(line).append('\n');
-						appendLog("[claim] " + line);
-					}
-				}
-				if (!p.waitFor(20, TimeUnit.SECONDS)) {
-					p.destroyForcibly();
-				}
-
-				String secret = extractHexSecret(output.toString());
+				String secret = extractHexSecret(output);
 				if (secret == null) {
 					throw new IOException(
 							"Could not parse a secret key from agent output:\n" + output);
@@ -162,10 +152,98 @@ public final class PlayitAgentManager {
 		}));
 	}
 
+	/**
+	 * Attempts to fetch a claim code from the playit CLI, including a direct claim URL
+	 * when available.
+	 */
+	public CompletableFuture<ClaimCodeInfo> fetchClaimCodeAsync() {
+		return ensureBinaryAsync().thenCompose(bin -> CompletableFuture.supplyAsync(() -> {
+			try {
+				List<String[]> attempts = List.of(
+						new String[] {"claim", "generate"},
+						new String[] {"claim", "create"},
+						new String[] {"claim", "new"});
+
+				List<String> diagnostics = new ArrayList<>();
+				for (String[] args : attempts) {
+					CommandResult result = runCommand(bin, args);
+					ClaimCodeInfo info = parseClaimInfo(result.output());
+					if (info != null) {
+						return info;
+					}
+					diagnostics.add("playit " + String.join(" ", args)
+								+ " (exit=" + result.exitCode() + "):\n"
+								+ result.output().strip());
+				}
+
+				throw new IOException(
+						"Could not fetch a claim code from playit. "
+								+ "Tried:\n" + String.join("\n\n", diagnostics));
+			} catch (IOException | InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new RuntimeException("Fetch claim code failed: " + e.getMessage(), e);
+			}
+		}));
+	}
+
 	private static String extractHexSecret(String s) {
 		Matcher m = Pattern.compile("([0-9a-fA-F]{32,128})").matcher(s);
 		return m.find() ? m.group(1) : null;
 	}
+
+	private static ClaimCodeInfo parseClaimInfo(String output) {
+		Matcher urlMatch = CLAIM_URL.matcher(output);
+		String url = urlMatch.find() ? urlMatch.group(1) : null;
+
+		String code = null;
+		if (url != null) {
+			Matcher fromPath = CLAIM_PATH_CODE.matcher(url);
+			if (fromPath.find()) {
+				code = fromPath.group(1);
+			}
+		}
+		if (code == null) {
+			Matcher tokenMatch = CLAIM_TOKEN.matcher(output);
+			if (tokenMatch.find()) {
+				code = tokenMatch.group(1);
+			}
+		}
+		if (code == null && url == null) {
+			return null;
+		}
+		return new ClaimCodeInfo(code, url);
+	}
+
+	private CommandResult runCommand(Path bin, String... args)
+			throws IOException, InterruptedException {
+		List<String> cmd = new ArrayList<>();
+		cmd.add(bin.toAbsolutePath().toString());
+		cmd.addAll(List.of(args));
+
+		ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
+		Process p = pb.start();
+
+		var output = new StringBuilder();
+		try (var reader = new BufferedReader(
+				new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+			String line;
+			while ((line = reader.readLine()) != null) {
+				output.append(line).append('\n');
+				appendLog("[claim] " + line);
+			}
+		}
+
+		if (!p.waitFor(20, TimeUnit.SECONDS)) {
+			p.destroyForcibly();
+			throw new IOException("Timed out running: " + String.join(" ", cmd));
+		}
+
+		return new CommandResult(p.exitValue(), output.toString());
+	}
+
+	public record ClaimCodeInfo(String claimCode, String claimUrl) {}
+
+	private record CommandResult(int exitCode, String output) {}
 
 	// ── Agent lifecycle ──────────────────────────────────────────────────────
 
