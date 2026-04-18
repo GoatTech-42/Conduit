@@ -22,13 +22,34 @@ public final class ConduitConfig {
 
 	/** All user-facing config values, with sensible defaults. */
 	public static final class Values {
+		// ── playit ──
+		/** Persisted playit secret (either guest-mode or linked-account). Empty = no tunnel yet. */
 		public String playitSecretKey = "";
+		/**
+		 * {@code true} if the stored secret was generated without a playit.gg account
+		 * (anonymous tunnel). Still fully functional; the user can upgrade to a linked
+		 * account at any time from the admin panel.
+		 */
+		public boolean playitGuestMode = false;
 		public String lastTunnelId = "";
+
+		// ── Hosting behaviour ──
 		public boolean crossplayDefault = false;
 		public boolean autoStartDefault = true;
+		public boolean openToLanByDefault = true;
+
+		// ── Server defaults ──
 		public int defaultRenderDistance = 10;
 		public int defaultSimulationDistance = 10;
 		public int defaultMaxPlayers = 8;
+		public boolean defaultPvp = true;
+		public boolean defaultAllowCheats = false;
+		/** One of: {@code peaceful}, {@code easy}, {@code normal}, {@code hard}. */
+		public String defaultDifficulty = "normal";
+		/** One of: {@code survival}, {@code creative}, {@code adventure}, {@code spectator}. */
+		public String defaultGameMode = "survival";
+		/** MOTD shown in the multiplayer server list. */
+		public String motd = "A Conduit-hosted world";
 	}
 
 	private final Values values = new Values();
@@ -83,21 +104,35 @@ public final class ConduitConfig {
 		return """
 				{
 				  "playitSecretKey": "%s",
+				  "playitGuestMode": %b,
 				  "lastTunnelId": "%s",
 				  "crossplayDefault": %b,
 				  "autoStartDefault": %b,
+				  "openToLanByDefault": %b,
 				  "defaultRenderDistance": %d,
 				  "defaultSimulationDistance": %d,
-				  "defaultMaxPlayers": %d
+				  "defaultMaxPlayers": %d,
+				  "defaultPvp": %b,
+				  "defaultAllowCheats": %b,
+				  "defaultDifficulty": "%s",
+				  "defaultGameMode": "%s",
+				  "motd": "%s"
 				}
 				""".formatted(
 				escape(v.playitSecretKey),
+				v.playitGuestMode,
 				escape(v.lastTunnelId),
 				v.crossplayDefault,
 				v.autoStartDefault,
+				v.openToLanByDefault,
 				v.defaultRenderDistance,
 				v.defaultSimulationDistance,
-				v.defaultMaxPlayers
+				v.defaultMaxPlayers,
+				v.defaultPvp,
+				v.defaultAllowCheats,
+				escape(v.defaultDifficulty),
+				escape(v.defaultGameMode),
+				escape(v.motd)
 		);
 	}
 
@@ -148,12 +183,19 @@ public final class ConduitConfig {
 			try {
 				switch (key) {
 					case "playitSecretKey"          -> v.playitSecretKey = stripQuotes(val);
+					case "playitGuestMode"          -> v.playitGuestMode = Boolean.parseBoolean(val);
 					case "lastTunnelId"             -> v.lastTunnelId = stripQuotes(val);
 					case "crossplayDefault"         -> v.crossplayDefault = Boolean.parseBoolean(val);
 					case "autoStartDefault"         -> v.autoStartDefault = Boolean.parseBoolean(val);
-					case "defaultRenderDistance"     -> v.defaultRenderDistance = Integer.parseInt(val);
+					case "openToLanByDefault"       -> v.openToLanByDefault = Boolean.parseBoolean(val);
+					case "defaultRenderDistance"    -> v.defaultRenderDistance = Integer.parseInt(val);
 					case "defaultSimulationDistance" -> v.defaultSimulationDistance = Integer.parseInt(val);
 					case "defaultMaxPlayers"        -> v.defaultMaxPlayers = Integer.parseInt(val);
+					case "defaultPvp"               -> v.defaultPvp = Boolean.parseBoolean(val);
+					case "defaultAllowCheats"       -> v.defaultAllowCheats = Boolean.parseBoolean(val);
+					case "defaultDifficulty"        -> v.defaultDifficulty = stripQuotes(val);
+					case "defaultGameMode"          -> v.defaultGameMode = stripQuotes(val);
+					case "motd"                     -> v.motd = stripQuotes(val);
 					default -> { /* forward-compatible: ignore unknown keys */ }
 				}
 			} catch (NumberFormatException ignored) {

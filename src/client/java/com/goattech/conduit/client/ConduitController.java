@@ -1,6 +1,7 @@
 package com.goattech.conduit.client;
 
 import com.goattech.conduit.ConduitMod;
+import com.goattech.conduit.server.ServerBridge;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.GameType;
@@ -21,16 +22,37 @@ public final class ConduitController {
 
 	// ── Start hosting ────────────────────────────────────────────────────────
 
+	/** Convenience overload with sensible defaults, preserved for any external callers. */
 	public static CompletableFuture<Void> startHosting(
 			GameType gameType,
 			boolean allowCheats,
 			boolean crossplay,
 			int maxPlayers
 	) {
+		return startHosting(gameType, allowCheats, crossplay, maxPlayers,
+				"normal", true, "A Conduit-hosted world", 10);
+	}
+
+	/**
+	 * Full-featured hosting entrypoint. Publishes the world to LAN, brings the playit
+	 * tunnel up (auto-generating a guest secret if needed), optionally starts Geyser,
+	 * applies server-side settings, and updates the multiplayer server list.
+	 */
+	public static CompletableFuture<Void> startHosting(
+			GameType gameType,
+			boolean allowCheats,
+			boolean crossplay,
+			int maxPlayers,
+			String difficulty,
+			boolean pvp,
+			String motd,
+			int renderDistance
+	) {
 		ConduitClient cc = ConduitClient.get();
 		cc.session().setState(ConduitSessionHolder.State.STARTING);
-		ConduitMod.LOGGER.info("Start hosting (crossplay={}, maxPlayers={})",
-				crossplay, maxPlayers);
+		ConduitMod.LOGGER.info(
+				"Start hosting (mode={}, difficulty={}, pvp={}, crossplay={}, maxPlayers={})",
+				gameType, difficulty, pvp, crossplay, maxPlayers);
 
 		return CompletableFuture
 				.supplyAsync(() -> {
@@ -45,6 +67,9 @@ public final class ConduitController {
 						cc.playit().startAsync(javaPort, crossplay)
 								.thenCompose(tunnel -> {
 									ConduitMod.LOGGER.info("Java tunnel up: {}", tunnel.address());
+									applyServerSettings(cc.server(),
+											difficulty, pvp, motd, renderDistance, gameType);
+
 									String worldName = Minecraft.getInstance()
 											.getSingleplayerServer()
 											.getWorldData()
@@ -78,6 +103,32 @@ public final class ConduitController {
 							"conduit.message.error_generic", ex.getMessage()));
 					return null;
 				});
+	}
+
+	private static void applyServerSettings(
+			ServerBridge srv,
+			String difficulty,
+			boolean pvp,
+			String motd,
+			int renderDistance,
+			GameType gameType
+	) {
+		try {
+			srv.setDifficulty(difficulty);
+			srv.setPvp(pvp);
+			if (motd != null && !motd.isBlank()) {
+				srv.setMotd(motd);
+			}
+			if (renderDistance > 0) {
+				srv.setRenderDistance(renderDistance);
+				srv.setSimulationDistance(renderDistance);
+			}
+			if (gameType != null) {
+				srv.setDefaultGameMode(gameType.getName());
+			}
+		} catch (Throwable t) {
+			ConduitMod.LOGGER.warn("Failed to apply some server settings: {}", t.toString());
+		}
 	}
 
 	// ── Stop hosting ─────────────────────────────────────────────────────────
