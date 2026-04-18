@@ -2,6 +2,7 @@ package com.goattech.conduit.geyser;
 
 import com.goattech.conduit.ConduitMod;
 import com.goattech.conduit.config.ConduitConfig;
+import com.goattech.conduit.util.ConsoleLog;
 import com.goattech.conduit.util.Downloader;
 
 import java.io.BufferedReader;
@@ -218,6 +219,8 @@ public final class GeyserManager {
 		while (logBuffer.size() > LOG_BUFFER_CAPACITY) {
 			logBuffer.removeFirst();
 		}
+		ConsoleLog.INSTANCE.append("geyser",
+				line != null && line.startsWith("[geyser] ") ? line.substring(9) : line);
 	}
 
 	private void destroyProcess() {

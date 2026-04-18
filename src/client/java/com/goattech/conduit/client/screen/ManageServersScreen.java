@@ -8,12 +8,15 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
+import java.time.Duration;
+import java.time.Instant;
+
 /**
  * Lightweight "Manage Conduit Servers" screen, reachable from the Multiplayer screen
  * whenever a tunnel is still running.
  *
- * <p>Lets the user copy the public IP, open the admin panel, or cleanly shut everything
- * down without rejoining the world.
+ * <p>Lets the user copy the public IP (Java &amp; Bedrock), open the admin panel, or
+ * cleanly shut everything down without rejoining the world.
  */
 public class ManageServersScreen extends Screen {
 
@@ -28,7 +31,11 @@ public class ManageServersScreen extends Screen {
 	protected void init() {
 		ConduitSessionHolder.SessionInfo info = ConduitClient.get().session().info();
 		int cx = width / 2;
+		int fw = 320;
+		int halfW = (fw - 8) / 2;
+		int lx = cx - fw / 2;
 
+		// No active session — offer a single "Back" button.
 		if (info == null) {
 			addRenderableWidget(Button.builder(
 							Component.translatable("conduit.screen.host.cancel"),
@@ -38,9 +45,9 @@ public class ManageServersScreen extends Screen {
 			return;
 		}
 
-		int y = 60;
+		int y = 80;
 
-		// Copy IP
+		// Row 1: Copy Java IP + Copy Bedrock IP (if available)
 		addRenderableWidget(Button.builder(
 						Component.translatable("conduit.button.copy_ip"),
 						b -> {
@@ -48,23 +55,38 @@ public class ManageServersScreen extends Screen {
 							minecraft.gui.getChat().addClientSystemMessage(
 									Component.translatable("conduit.message.copied"));
 						})
-				.bounds(cx - 150, y, 140, 20).build());
+				.bounds(lx, y, halfW, 20).build());
 
-		// Admin panel
+		Button bedrockBtn = Button.builder(
+						Component.translatable("conduit.button.copy_bedrock_ip"),
+						b -> {
+							if (info.tunnelBedrockAddress() != null) {
+								minecraft.keyboardHandler.setClipboard(info.tunnelBedrockAddress());
+								minecraft.gui.getChat().addClientSystemMessage(
+										Component.translatable("conduit.message.copied"));
+							}
+						})
+				.bounds(lx + halfW + 8, y, halfW, 20)
+				.build();
+		bedrockBtn.active = info.tunnelBedrockAddress() != null;
+		addRenderableWidget(bedrockBtn);
+		y += 28;
+
+		// Row 2: Admin Panel (full width)
 		addRenderableWidget(Button.builder(
 						Component.translatable("conduit.button.open_admin"),
 						b -> minecraft.setScreen(new AdminPanelScreen(parent)))
-				.bounds(cx + 10, y, 140, 20).build());
-		y += 40;
+				.bounds(lx, y, fw, 20).build());
+		y += 28;
 
-		// Shutdown everything
+		// Row 3: Shut down all (prominent, full width)
 		addRenderableWidget(Button.builder(
 						Component.translatable("conduit.button.shutdown_all"),
 						b -> ConduitController.stopHosting().whenComplete((v, err) ->
 								minecraft.execute(() -> minecraft.setScreen(parent))))
-				.bounds(cx - 150, y, 300, 20).build());
+				.bounds(lx, y, fw, 20).build());
 
-		// Cancel / back
+		// Back (bottom-center)
 		addRenderableWidget(Button.builder(
 						Component.translatable("conduit.screen.host.cancel"),
 						b -> onClose())
@@ -74,37 +96,55 @@ public class ManageServersScreen extends Screen {
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float dt) {
 		super.extractRenderState(g, mx, my, dt);
-		g.centeredText(font, title, width / 2, 16, 0xFFFFFF);
+		int cx = width / 2;
+		g.centeredText(font, title, cx, 14, 0xFFFFFF);
 
 		ConduitSessionHolder.SessionInfo info = ConduitClient.get().session().info();
-		int y = 110;
+		int y = 32;
 
 		if (info == null) {
 			g.centeredText(font,
 					Component.translatable("conduit.screen.manage.empty"),
-					width / 2, y, 0xAAAAAA);
+					cx, y, 0xAAAAAA);
 			return;
 		}
 
 		g.centeredText(font,
 				Component.translatable("conduit.screen.manage.world", info.worldName()),
-				width / 2, y, 0xFFFFFF);
-		y += 14;
+				cx, y, 0xFFFFFF);
+		y += 12;
 
 		if (info.tunnelJavaAddress() != null) {
-			g.centeredText(font, info.tunnelJavaAddress(), width / 2, y, 0x55FF55);
-			y += 14;
+			g.centeredText(font,
+					Component.literal("Java: " + info.tunnelJavaAddress()),
+					cx, y, 0x55FF55);
+			y += 12;
 		}
-
 		if (info.tunnelBedrockAddress() != null) {
-			g.centeredText(font, info.tunnelBedrockAddress(), width / 2, y, 0x55FFFF);
-			y += 14;
+			g.centeredText(font,
+					Component.literal("Bedrock: " + info.tunnelBedrockAddress()),
+					cx, y, 0x55FFFF);
+			y += 12;
 		}
 
+		// Friendly "running for X" line under the addresses.
+		String uptime = humanizeUptime(info.startedAt());
 		g.centeredText(font,
-				Component.translatable("conduit.screen.manage.started",
-						info.startedAt().toString()),
-				width / 2, y, 0xAAAAAA);
+				Component.translatable("conduit.screen.manage.started", uptime),
+				cx, y, 0xAAAAAA);
+	}
+
+	private static String humanizeUptime(Instant since) {
+		if (since == null) return "?";
+		Duration d = Duration.between(since, Instant.now());
+		if (d.isNegative()) d = Duration.ZERO;
+		long total = d.getSeconds();
+		long hours = total / 3600;
+		long minutes = (total % 3600) / 60;
+		long seconds = total % 60;
+		if (hours > 0)   return "%dh %02dm".formatted(hours, minutes);
+		if (minutes > 0) return "%dm %02ds".formatted(minutes, seconds);
+		return seconds + "s";
 	}
 
 	@Override

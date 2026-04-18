@@ -11,6 +11,12 @@
 	"conduit.screen.host.subtitle_guest": "No playit.gg account needed \u2014 a free anonymous tunnel will be created for you.",
 	"conduit.screen.host.subtitle_linked": "Hosting with your linked playit.gg account.",
 
+	"conduit.screen.host.section_core": "\u00a7lCore Settings",
+	"conduit.screen.host.section_rules": "\u00a7lGameplay Rules",
+	"conduit.screen.host.section_world": "\u00a7lWorld Rules",
+	"conduit.screen.host.section_server": "\u00a7lServer Info",
+	"conduit.screen.host.section_account": "\u00a7lAccount",
+
 	"conduit.screen.host.gamemode": "Game mode: %s",
 	"conduit.screen.host.difficulty": "Difficulty: %s",
 	"conduit.screen.host.max_players": "Max players: %d",
@@ -71,13 +77,26 @@
 	"conduit.screen.admin.say_placeholder": "/say message...",
 	"conduit.screen.admin.say_send": "Send",
 
+	"conduit.screen.admin.console_input_hint": "Type a server command and press Enter (\u2191\u2193 for history)",
+	"conduit.screen.admin.console_send": "Send",
+	"conduit.screen.admin.console_clear": "Clear",
+	"conduit.screen.admin.console_jump_end": "Jump to end",
+	"conduit.screen.admin.console_copy": "Copy logs",
+	"conduit.screen.admin.console_scrollback": "\u2191 %d lines back \u2014 scroll down to follow live",
+
 	"conduit.screen.admin.tunnel_address": "Public address:",
 	"conduit.screen.admin.local_address": "Local address:",
 	"conduit.screen.admin.started": "Started:",
 	"conduit.screen.admin.account": "Account:",
 	"conduit.screen.admin.account_linked": "Linked to playit.gg",
 	"conduit.screen.admin.account_guest": "Guest (anonymous tunnel)",
+	"conduit.screen.admin.agent_status": "Agent:",
+	"conduit.screen.admin.agent_running": "Running",
+	"conduit.screen.admin.agent_idle": "Idle",
 	"conduit.screen.admin.player_count": "Players online: %d / %d",
+
+	"conduit.screen.admin.playit_secret_path": "Show secret path",
+	"conduit.screen.admin.playit_reset": "Reset playit agent",
 
 	"conduit.screen.manage.title": "Manage Conduit Servers",
 	"conduit.screen.manage.empty": "No Conduit servers currently running.",
@@ -85,6 +104,7 @@
 	"conduit.screen.manage.started": "Started: %s",
 
 	"conduit.message.copied": "Copied tunnel address to clipboard!",
+	"conduit.message.copied_logs": "Copied Conduit console to clipboard.",
 	"conduit.message.agent_downloading": "Downloading playit agent...",
 	"conduit.message.agent_starting": "Starting playit agent...",
 	"conduit.message.agent_ready": "Tunnel ready: %s",

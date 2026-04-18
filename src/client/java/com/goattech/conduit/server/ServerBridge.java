@@ -332,6 +332,37 @@ public final class ServerBridge {
 	}
 
 	/**
+	 * Public entrypoint for the in-game console &mdash; runs an arbitrary
+	 * vanilla command as if the server operator had typed it. A leading
+	 * slash is stripped if present.
+	 *
+	 * <p>Use with caution from the UI; callers are expected to be operators
+	 * (the Admin Panel is only reachable from the local host).
+	 *
+	 * @return {@code true} if the command was dispatched (the server was
+	 *         running), {@code false} otherwise.
+	 */
+	public boolean runConsoleCommand(String command) {
+		if (command == null) return false;
+		String trimmed = command.strip();
+		if (trimmed.isEmpty()) return false;
+		if (trimmed.startsWith("/")) trimmed = trimmed.substring(1);
+		IntegratedServer srv = Minecraft.getInstance().getSingleplayerServer();
+		if (srv == null) return false;
+		final String cmd = trimmed;
+		srv.execute(() -> {
+			try {
+				var src = srv.createCommandSourceStack();
+				srv.getCommands().performPrefixedCommand(src, cmd);
+			} catch (Throwable t) {
+				ConduitMod.LOGGER.warn("Console command failed: /{} \u2014 {}", cmd, t.toString());
+				ConduitMod.console().warn("/" + cmd + " failed: " + t.getMessage());
+			}
+		});
+		return true;
+	}
+
+	/**
 	 * Applies all extended settings from config to the running server in one go.
 	 * Called after the server is published and basic settings have been applied.
 	 */
