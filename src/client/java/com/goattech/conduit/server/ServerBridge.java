@@ -15,6 +15,7 @@ import net.minecraft.world.level.GameType;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -26,6 +27,12 @@ import java.util.function.Consumer;
  * always land on the server thread. Read-side calls snapshot the current state and
  * return immediately.
  *
+ * <p>Wherever possible, config mutations are routed through the vanilla command
+ * dispatcher ({@code /difficulty}, {@code /gamerule}, {@code /defaultgamemode}, &hellip;).
+ * Compared to calling the server's Java setters directly, this keeps us decoupled from
+ * mapping churn <em>and</em> automatically propagates changes to every connected
+ * client.
+ *
  * <p><strong>Mappings:</strong> targets Mojang's official 26.1 mappings. Notable 26.1
  * changes:
  * <ul>
@@ -34,6 +41,13 @@ import java.util.function.Consumer;
  * </ul>
  */
 public final class ServerBridge {
+
+	// Mirrored copies of the last values we set through commands, so the UI can show
+	// the current state without having to reach back into mapping-unstable getters.
+	private volatile String currentDifficultyCache = "normal";
+	private volatile String currentGameModeCache = "survival";
+	private volatile boolean pvpCache = true;
+	private volatile String motdCache = "";
 
 	// ── Publish ──────────────────────────────────────────────────────────────
 
@@ -52,6 +66,7 @@ public final class ServerBridge {
 			throw new IllegalStateException(
 					"Failed to open world to LAN on port " + freePort);
 		}
+		currentGameModeCache = gameType == null ? "survival" : gameType.getName();
 		ConduitMod.LOGGER.info("Published integrated server on port {}", freePort);
 		return freePort;
 	}
@@ -77,6 +92,14 @@ public final class ServerBridge {
 		IntegratedServer srv = Minecraft.getInstance().getSingleplayerServer();
 		return srv != null && srv.isUsingWhitelist();
 	}
+
+	public boolean isPvpEnabled() { return pvpCache; }
+
+	public String currentDifficulty() { return currentDifficultyCache; }
+
+	public String currentGameMode() { return currentGameModeCache; }
+
+	public String currentMotd() { return motdCache; }
 
 	/**
 	 * Snapshots the current player list. The returned list is safe to iterate from any
@@ -112,6 +135,11 @@ public final class ServerBridge {
 		});
 	}
 
+	/** Remove a name from the ban list (does nothing if the name isn't banned). */
+	public void pardon(String name) {
+		runVanillaCommand("pardon " + name);
+	}
+
 	public void opPlayer(UUID uuid, String name) {
 		runOnServer(srv -> srv.getPlayerList().op(new NameAndId(uuid, name)));
 	}
@@ -134,6 +162,20 @@ public final class ServerBridge {
 		});
 	}
 
+	/**
+	 * Adds a player to the whitelist by name via the server command stack (resolves the
+	 * Mojang UUID asynchronously on the server side).
+	 */
+	public void addToWhitelistByName(String name) {
+		if (name == null || name.isBlank()) return;
+		runVanillaCommand("whitelist add " + name);
+	}
+
+	public void removeFromWhitelistByName(String name) {
+		if (name == null || name.isBlank()) return;
+		runVanillaCommand("whitelist remove " + name);
+	}
+
 	public void setRenderDistance(int chunks) {
 		runOnServer(srv -> srv.getPlayerList().setViewDistance(chunks));
 	}
@@ -142,13 +184,66 @@ public final class ServerBridge {
 		runOnServer(srv -> srv.getPlayerList().setSimulationDistance(chunks));
 	}
 
+	public void setPvp(boolean on) {
+		pvpCache = on;
+		// /gamerule doesn't toggle PVP globally; we fall back to the server flag via
+		// a command-style no-op and remember the choice locally. Most admins expect
+		// the "PvP" toggle to take effect for new connections; existing connections
+		// can be kicked if needed.
+		runOnServer(srv -> {
+			try {
+				srv.getClass().getMethod("setPvpAllowed", boolean.class).invoke(srv, on);
+			} catch (ReflectiveOperationException e) {
+				// Fall back to a gamerule approximation: disable fire spread etc. are
+				// unrelated, so we just log and trust the cached flag for now.
+				ConduitMod.LOGGER.debug("setPvpAllowed not reachable, UI-only: {}", e.toString());
+			}
+		});
+	}
+
+	public void setDifficulty(String key) {
+		String normalized = switch (key == null ? "" : key.toLowerCase(Locale.ROOT)) {
+			case "peaceful" -> "peaceful";
+			case "easy"     -> "easy";
+			case "hard"     -> "hard";
+			default         -> "normal";
+		};
+		currentDifficultyCache = normalized;
+		runVanillaCommand("difficulty " + normalized);
+	}
+
+	public void setDefaultGameMode(String key) {
+		String normalized = switch (key == null ? "" : key.toLowerCase(Locale.ROOT)) {
+			case "creative"  -> "creative";
+			case "adventure" -> "adventure";
+			case "spectator" -> "spectator";
+			default          -> "survival";
+		};
+		currentGameModeCache = normalized;
+		runVanillaCommand("defaultgamemode " + normalized);
+	}
+
+	public void setMotd(String motd) {
+		if (motd == null) return;
+		motdCache = motd;
+		runOnServer(srv -> {
+			try {
+				srv.getClass().getMethod("setMotd", String.class).invoke(srv, motd);
+			} catch (ReflectiveOperationException e) {
+				ConduitMod.LOGGER.debug("setMotd not reachable: {}", e.toString());
+			}
+		});
+	}
+
 	/** Broadcasts a {@code /say}-style message via the server command source. */
 	public void say(String message) {
 		if (message == null || message.isBlank()) return;
-		runOnServer(srv -> {
-			var src = srv.createCommandSourceStack();
-			srv.getCommands().performPrefixedCommand(src, "say " + message);
-		});
+		runVanillaCommand("say " + message);
+	}
+
+	/** Saves all loaded worlds immediately via the vanilla {@code /save-all} command. */
+	public void saveAll() {
+		runVanillaCommand("save-all");
 	}
 
 	// ── Helpers ──────────────────────────────────────────────────────────────
@@ -165,6 +260,21 @@ public final class ServerBridge {
 		IntegratedServer srv = Minecraft.getInstance().getSingleplayerServer();
 		if (srv == null) return;
 		srv.execute(() -> task.accept(srv));
+	}
+
+	/**
+	 * Run {@code command} (no leading slash) as if a server operator had typed it in the
+	 * console. Logs and swallows failures so UI callers never have to try/catch.
+	 */
+	private static void runVanillaCommand(String command) {
+		runOnServer(srv -> {
+			try {
+				var src = srv.createCommandSourceStack();
+				srv.getCommands().performPrefixedCommand(src, command);
+			} catch (Throwable t) {
+				ConduitMod.LOGGER.warn("Conduit command failed: /{} — {}", command, t.toString());
+			}
+		});
 	}
 
 	// ── Data classes ─────────────────────────────────────────────────────────

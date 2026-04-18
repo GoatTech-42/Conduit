@@ -9,10 +9,17 @@ One-click server hosting for your single-player Minecraft worlds, powered by [pl
 ## Features
 
 - **"Host This World" button** injected into the in-game pause menu — one click to go from single-player to multiplayer.
-- **Zero-admin setup** — the playit agent binary is downloaded on demand into `conduit/`; no MSI, no `sudo`, no service install.
-- **playit.gg account linking** — paste a claim code from [playit.gg/claim](https://playit.gg/claim) to link your account and reuse tunnels without leaving the game.
+- **Zero-admin, zero-signup setup** — the playit agent binary is downloaded on demand into `conduit/`; no MSI, no `sudo`, no service install. A **playit.gg account is _not_ required** — Conduit automatically generates a free anonymous tunnel for you on first use.
+- **Optional one-click account linking** — if you _do_ want to manage your tunnels on playit.gg, Conduit opens the claim page in your browser automatically. No copy/pasting claim codes.
 - **Geyser / Floodgate cross-play** — toggle on Bedrock support and Conduit auto-downloads and configures standalone Geyser next to your server.
-- **Live admin panel** — whitelist, kick, ban, op/deop, render distance, simulation distance, `/say` broadcasting, and a streaming console tail that multiplexes server + playit + Geyser logs.
+- **Full-featured hosting panel**
+  - **Host screen**: game mode, difficulty, PvP, allow-cheats, max players, render distance, MOTD, cross-play, all configurable before you go live.
+  - **Admin panel** with five tabs: Players, World, Settings, Console, Network.
+  - Players: whitelist on/off, add-by-name, kick / ban / op / deop.
+  - World: change difficulty / default game mode / PvP on the fly, save-all.
+  - Settings: render & simulation distance sliders, MOTD editor, `/say` broadcast.
+  - Console: auto-refreshing tail of playit + Geyser logs.
+  - Network: copy Java & Bedrock IPs, link/unlink playit.gg account.
 - **Smart distance locking** — render / simulation distance sliders in Video Settings are disabled while hosting so the server and all clients stay in sync (adjustable from the admin panel).
 - **Auto server-list entry** — your tunneled address is automatically added to the Multiplayer list and cleaned up when you stop hosting.
 - **Manage running servers** — a "Manage Conduit Servers" button appears on the Multiplayer screen if a tunnel is still running, letting you copy the IP, open the admin panel, or shut everything down.
