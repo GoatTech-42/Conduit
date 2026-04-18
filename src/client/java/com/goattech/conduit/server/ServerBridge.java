@@ -48,6 +48,15 @@ public final class ServerBridge {
 	private volatile String currentGameModeCache = "survival";
 	private volatile boolean pvpCache = true;
 	private volatile String motdCache = "";
+	private volatile boolean allowFlightCache = false;
+	private volatile boolean forceGameModeCache = false;
+	private volatile boolean announceAdvancementsCache = true;
+	private volatile boolean spawnNpcsCache = true;
+	private volatile boolean spawnAnimalsCache = true;
+	private volatile boolean spawnMonstersCache = true;
+	private volatile boolean enableCommandBlockCache = false;
+	private volatile int spawnProtectionCache = 0;
+	private volatile int playerIdleTimeoutCache = 0;
 
 	// ── Publish ──────────────────────────────────────────────────────────────
 
@@ -93,13 +102,19 @@ public final class ServerBridge {
 		return srv != null && srv.isUsingWhitelist();
 	}
 
-	public boolean isPvpEnabled() { return pvpCache; }
-
-	public String currentDifficulty() { return currentDifficultyCache; }
-
-	public String currentGameMode() { return currentGameModeCache; }
-
-	public String currentMotd() { return motdCache; }
+	public boolean isPvpEnabled()              { return pvpCache; }
+	public String  currentDifficulty()         { return currentDifficultyCache; }
+	public String  currentGameMode()           { return currentGameModeCache; }
+	public String  currentMotd()               { return motdCache; }
+	public boolean isAllowFlightEnabled()      { return allowFlightCache; }
+	public boolean isForceGameModeEnabled()    { return forceGameModeCache; }
+	public boolean isAnnounceAdvancementsOn()  { return announceAdvancementsCache; }
+	public boolean isSpawnNpcsEnabled()        { return spawnNpcsCache; }
+	public boolean isSpawnAnimalsEnabled()     { return spawnAnimalsCache; }
+	public boolean isSpawnMonstersEnabled()    { return spawnMonstersCache; }
+	public boolean isCommandBlockEnabled()     { return enableCommandBlockCache; }
+	public int     getSpawnProtection()        { return spawnProtectionCache; }
+	public int     getPlayerIdleTimeout()      { return playerIdleTimeoutCache; }
 
 	/**
 	 * Snapshots the current player list. The returned list is safe to iterate from any
@@ -186,16 +201,10 @@ public final class ServerBridge {
 
 	public void setPvp(boolean on) {
 		pvpCache = on;
-		// /gamerule doesn't toggle PVP globally; we fall back to the server flag via
-		// a command-style no-op and remember the choice locally. Most admins expect
-		// the "PvP" toggle to take effect for new connections; existing connections
-		// can be kicked if needed.
 		runOnServer(srv -> {
 			try {
 				srv.getClass().getMethod("setPvpAllowed", boolean.class).invoke(srv, on);
 			} catch (ReflectiveOperationException e) {
-				// Fall back to a gamerule approximation: disable fire spread etc. are
-				// unrelated, so we just log and trust the cached flag for now.
 				ConduitMod.LOGGER.debug("setPvpAllowed not reachable, UI-only: {}", e.toString());
 			}
 		});
@@ -235,6 +244,82 @@ public final class ServerBridge {
 		});
 	}
 
+	public void setAllowFlight(boolean on) {
+		allowFlightCache = on;
+		runOnServer(srv -> {
+			try {
+				srv.getClass().getMethod("setFlightAllowed", boolean.class).invoke(srv, on);
+			} catch (ReflectiveOperationException e) {
+				ConduitMod.LOGGER.debug("setFlightAllowed not reachable: {}", e.toString());
+			}
+		});
+	}
+
+	public void setForceGameMode(boolean on) {
+		forceGameModeCache = on;
+		runVanillaCommand("gamerule forceGameMode " + on);
+	}
+
+	public void setAnnounceAdvancements(boolean on) {
+		announceAdvancementsCache = on;
+		runVanillaCommand("gamerule announceAdvancements " + on);
+	}
+
+	public void setSpawnNpcs(boolean on) {
+		spawnNpcsCache = on;
+		runOnServer(srv -> {
+			try {
+				srv.getClass().getMethod("setSpawnNPCs", boolean.class).invoke(srv, on);
+			} catch (ReflectiveOperationException e) {
+				ConduitMod.LOGGER.debug("setSpawnNPCs not reachable: {}", e.toString());
+			}
+		});
+	}
+
+	public void setSpawnAnimals(boolean on) {
+		spawnAnimalsCache = on;
+		runOnServer(srv -> {
+			try {
+				srv.getClass().getMethod("setSpawnAnimals", boolean.class).invoke(srv, on);
+			} catch (ReflectiveOperationException e) {
+				ConduitMod.LOGGER.debug("setSpawnAnimals not reachable: {}", e.toString());
+			}
+		});
+	}
+
+	public void setSpawnMonsters(boolean on) {
+		spawnMonstersCache = on;
+		runOnServer(srv -> {
+			try {
+				srv.getClass().getMethod("setSpawnMonsters", boolean.class).invoke(srv, on);
+			} catch (ReflectiveOperationException e) {
+				ConduitMod.LOGGER.debug("setSpawnMonsters not reachable: {}", e.toString());
+			}
+		});
+	}
+
+	public void setEnableCommandBlock(boolean on) {
+		enableCommandBlockCache = on;
+		runVanillaCommand("gamerule commandBlockOutput " + on);
+	}
+
+	public void setSpawnProtection(int radius) {
+		spawnProtectionCache = Math.max(0, Math.min(radius, 256));
+		runOnServer(srv -> {
+			try {
+				srv.getClass().getMethod("setSpawnProtection", int.class)
+						.invoke(srv, spawnProtectionCache);
+			} catch (ReflectiveOperationException e) {
+				ConduitMod.LOGGER.debug("setSpawnProtection not reachable: {}", e.toString());
+			}
+		});
+	}
+
+	public void setPlayerIdleTimeout(int minutes) {
+		playerIdleTimeoutCache = Math.max(0, minutes);
+		runOnServer(srv -> srv.setPlayerIdleTimeout(playerIdleTimeoutCache));
+	}
+
 	/** Broadcasts a {@code /say}-style message via the server command source. */
 	public void say(String message) {
 		if (message == null || message.isBlank()) return;
@@ -244,6 +329,32 @@ public final class ServerBridge {
 	/** Saves all loaded worlds immediately via the vanilla {@code /save-all} command. */
 	public void saveAll() {
 		runVanillaCommand("save-all");
+	}
+
+	/**
+	 * Applies all extended settings from config to the running server in one go.
+	 * Called after the server is published and basic settings have been applied.
+	 */
+	public void applyExtendedSettings(
+			boolean allowFlight,
+			boolean forceGameMode,
+			boolean spawnNpcs,
+			boolean spawnAnimals,
+			boolean spawnMonsters,
+			boolean announceAdvancements,
+			boolean enableCommandBlock,
+			int spawnProtection,
+			int playerIdleTimeout
+	) {
+		setAllowFlight(allowFlight);
+		setForceGameMode(forceGameMode);
+		setSpawnNpcs(spawnNpcs);
+		setSpawnAnimals(spawnAnimals);
+		setSpawnMonsters(spawnMonsters);
+		setAnnounceAdvancements(announceAdvancements);
+		setEnableCommandBlock(enableCommandBlock);
+		setSpawnProtection(spawnProtection);
+		setPlayerIdleTimeout(playerIdleTimeout);
 	}
 
 	// ── Helpers ──────────────────────────────────────────────────────────────

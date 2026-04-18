@@ -1,6 +1,7 @@
 package com.goattech.conduit.client;
 
 import com.goattech.conduit.ConduitMod;
+import com.goattech.conduit.config.ConduitConfig;
 import com.goattech.conduit.server.ServerBridge;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -30,7 +31,7 @@ public final class ConduitController {
 			int maxPlayers
 	) {
 		return startHosting(gameType, allowCheats, crossplay, maxPlayers,
-				"normal", true, "A Conduit-hosted world", 10);
+				"normal", true, "A Conduit-hosted world", 10, 10);
 	}
 
 	/**
@@ -46,7 +47,8 @@ public final class ConduitController {
 			String difficulty,
 			boolean pvp,
 			String motd,
-			int renderDistance
+			int renderDistance,
+			int simulationDistance
 	) {
 		ConduitClient cc = ConduitClient.get();
 		cc.session().setState(ConduitSessionHolder.State.STARTING);
@@ -67,8 +69,9 @@ public final class ConduitController {
 						cc.playit().startAsync(javaPort, crossplay)
 								.thenCompose(tunnel -> {
 									ConduitMod.LOGGER.info("Java tunnel up: {}", tunnel.address());
-									applyServerSettings(cc.server(),
-											difficulty, pvp, motd, renderDistance, gameType);
+									applyServerSettings(cc.server(), cc.config().values(),
+											difficulty, pvp, motd, renderDistance,
+											simulationDistance, gameType);
 
 									String worldName = Minecraft.getInstance()
 											.getSingleplayerServer()
@@ -107,10 +110,12 @@ public final class ConduitController {
 
 	private static void applyServerSettings(
 			ServerBridge srv,
+			ConduitConfig.Values cfg,
 			String difficulty,
 			boolean pvp,
 			String motd,
 			int renderDistance,
+			int simulationDistance,
 			GameType gameType
 	) {
 		try {
@@ -121,11 +126,26 @@ public final class ConduitController {
 			}
 			if (renderDistance > 0) {
 				srv.setRenderDistance(renderDistance);
-				srv.setSimulationDistance(renderDistance);
+			}
+			if (simulationDistance > 0) {
+				srv.setSimulationDistance(simulationDistance);
 			}
 			if (gameType != null) {
 				srv.setDefaultGameMode(gameType.getName());
 			}
+
+			// Apply extended settings from config.
+			srv.applyExtendedSettings(
+					cfg.allowFlight,
+					cfg.forceGameMode,
+					cfg.spawnNpcs,
+					cfg.spawnAnimals,
+					cfg.spawnMonsters,
+					cfg.announceAdvancements,
+					cfg.enableCommandBlock,
+					cfg.spawnProtection,
+					cfg.playerIdleTimeout
+			);
 		} catch (Throwable t) {
 			ConduitMod.LOGGER.warn("Failed to apply some server settings: {}", t.toString());
 		}
