@@ -577,13 +577,14 @@ public final class PlayitAgentManager {
 						.name("conduit-playit-pump")
 						.start(() -> pumpOutput(p, localPort));
 
-				// Wait up to 45 s for a tunnel line (first run may need provisioning time).
-				long deadline = System.currentTimeMillis() + 45_000;
+				// Wait up to 60 s for a tunnel line (first run may need provisioning time).
+				long deadline = System.currentTimeMillis() + 60_000;
 				while (System.currentTimeMillis() < deadline) {
 					if (!p.isAlive()) {
 						throw new IOException(
 								"playit agent exited early with code " + p.exitValue()
-										+ ". See the Console tab for details.");
+										+ ". See the Console tab of the admin panel for the "
+										+ "agent's output.");
 					}
 					PlayitTunnel t = lastTunnel.get();
 					if (t != null && t.localPort() == localPort) {
@@ -591,7 +592,11 @@ public final class PlayitAgentManager {
 					}
 					Thread.sleep(250);
 				}
-				throw new IOException("Timed out waiting for playit tunnel to come up.");
+				throw new IOException(
+						"Timed out waiting for the playit tunnel to come up after 60s. "
+								+ "Your network may be blocking outbound traffic to playit's "
+								+ "relays (common on corporate networks). Open the Console tab "
+								+ "for details, or try 'Reset playit agent' from the Network tab.");
 			} catch (IOException | InterruptedException e) {
 				Thread.currentThread().interrupt();
 				destroyProcess();

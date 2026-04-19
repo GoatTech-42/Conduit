@@ -113,6 +113,10 @@ public final class ConduitClient implements ClientModInitializer {
 	 * Disables the render-distance and simulation-distance sliders in Video Settings
 	 * while Conduit is hosting, since those values are controlled from the admin panel
 	 * and must stay in sync with what remote players see.
+	 *
+	 * <p>We match both the English substring (works in any locale that falls back to
+	 * English) and the underlying Minecraft translation key (works when a localized
+	 * resource pack is active), so the lock is applied regardless of the UI language.
 	 */
 	private static void lockDistanceSlidersIfHosting(VideoSettingsScreen screen) {
 		if (!ConduitClient.get().session().isAnythingRunning()) return;
@@ -122,8 +126,23 @@ public final class ConduitClient implements ClientModInitializer {
 		for (AbstractWidget widget : Screens.getWidgets(screen)) {
 			Component msg = widget.getMessage();
 			if (msg == null) continue;
-			String label = msg.getString().toLowerCase();
-			if (label.contains("render distance") || label.contains("simulation distance")) {
+
+			// Try the translation-key path first (locale-independent).
+			boolean match = false;
+			if (msg.getContents() instanceof net.minecraft.network.chat.contents.TranslatableContents tc) {
+				String key = tc.getKey();
+				if (key != null && (key.startsWith("options.renderDistance")
+						|| key.startsWith("options.simulationDistance"))) {
+					match = true;
+				}
+			}
+
+			if (!match) {
+				String label = msg.getString().toLowerCase(java.util.Locale.ROOT);
+				match = label.contains("render distance") || label.contains("simulation distance");
+			}
+
+			if (match) {
 				widget.active = false;
 				widget.setTooltip(Tooltip.create(lockTooltip));
 			}

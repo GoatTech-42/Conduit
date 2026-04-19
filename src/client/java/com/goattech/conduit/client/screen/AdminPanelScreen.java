@@ -104,10 +104,17 @@ public class AdminPanelScreen extends Screen {
 
 		int cx = width / 2;
 
-		// Tab bar — centered
+		// Leave room on the right for the "Stop Hosting" button so it never overlaps
+		// the tab strip, even on narrow Minecraft windows.
+		int stopBtnW = 110;
+		int stopReserve = stopBtnW + 12;
+
+		// Tab bar — centered within the available space.
 		Tab[] tabs = Tab.values();
 		int tabCount = tabs.length;
-		int tabWidth = Math.min(76, (width - 140) / tabCount - TAB_GAP);
+		int availableW = Math.max(200, width - stopReserve * 2);
+		int tabWidth = Math.min(76, availableW / tabCount - TAB_GAP);
+		tabWidth = Math.max(40, tabWidth);
 		int totalTabW = tabCount * tabWidth + (tabCount - 1) * TAB_GAP;
 		int tabStartX = cx - totalTabW / 2;
 
@@ -124,13 +131,20 @@ public class AdminPanelScreen extends Screen {
 			tx += tabWidth + TAB_GAP;
 		}
 
-		// Stop hosting button (top-right)
-		addRenderableWidget(Button.builder(
+		// Stop hosting button (top-right). On very narrow windows where it would
+		// collide with the tab bar we drop it to a second row instead.
+		int stopX = width - stopBtnW - 6;
+		int tabsRightEdge = tabStartX + totalTabW;
+		int stopY = (tabsRightEdge + 6 > stopX) ? HEADER_Y + TAB_HEIGHT + 4 : HEADER_Y;
+		Button stopBtn = Button.builder(
 						Component.translatable("conduit.button.stop_hosting"),
 						b -> ConduitController.stopHosting().whenComplete((v, e) ->
 								minecraft.execute(() -> minecraft.setScreen(parent))))
-				.bounds(width - 116, HEADER_Y, 110, 20)
-				.build());
+				.bounds(stopX, stopY, stopBtnW, 20)
+				.build();
+		stopBtn.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+				Component.translatable("conduit.tooltip.stop_hosting")));
+		addRenderableWidget(stopBtn);
 
 		// Active tab content
 		switch (activeTab) {
@@ -188,8 +202,15 @@ public class AdminPanelScreen extends Screen {
 				.bounds(lx + fw - 56, y, 56, 20).build());
 		y += ROW_H + 4;
 
-		// Per-player controls — each row: name label (rendered) + Kick/Ban/Op/Deop
-		for (var ps : srv.listPlayers()) {
+		// Per-player controls — each row: name label (rendered in renderPlayerList)
+		// + Kick/Ban/Op/Deop. We stop rendering rows that would fall off the bottom
+		// of the screen so the controls never draw on top of chat / below the window.
+		int rowsBottom = height - 12;
+		int maxRows = Math.max(1, (rowsBottom - y) / 22);
+		var players = srv.listPlayers();
+		int shown = Math.min(players.size(), maxRows);
+		for (int i = 0; i < shown; i++) {
+			var ps = players.get(i);
 			int py = y;
 			int btnW = 46;
 			int opW  = 36;
@@ -217,7 +238,14 @@ public class AdminPanelScreen extends Screen {
 					.bounds(bx, py, btnW, 20).build());
 			y += 22;
 		}
+		// Store the visible count so renderPlayerList agrees with the widget layout.
+		this.playersShown = shown;
+		this.playersTotal = players.size();
 	}
+
+	/** How many player rows were laid out last rebuild (for renderPlayerList). */
+	private int playersShown = 0;
+	private int playersTotal = 0;
 
 	// ── World tab ────────────────────────────────────────────────────────────
 
@@ -782,10 +810,23 @@ public class AdminPanelScreen extends Screen {
 		ServerBridge srv = ConduitClient.get().server();
 		int lx = colL();
 		int y = CONTENT_Y + 30;
-		for (var ps : srv.listPlayers()) {
+		var players = srv.listPlayers();
+		int shown = Math.min(playersShown, players.size());
+		for (int i = 0; i < shown; i++) {
+			var ps = players.get(i);
 			g.text(font, ps.name() + "  (" + ps.gameMode() + ")",
 					lx, y + 4, 0xFFFFFF, false);
 			y += 22;
+		}
+		if (playersTotal > shown) {
+			g.text(font,
+					Component.literal("\u00A77+" + (playersTotal - shown)
+							+ " more \u2014 resize window to show"),
+					lx, y + 4, 0xAAAAAA, false);
+		}
+		if (players.isEmpty()) {
+			g.text(font, Component.translatable("conduit.screen.admin.no_players"),
+					lx, y + 4, 0x888888, false);
 		}
 	}
 

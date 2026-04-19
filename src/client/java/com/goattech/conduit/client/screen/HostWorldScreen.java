@@ -5,14 +5,18 @@ import com.goattech.conduit.client.ConduitController;
 import com.goattech.conduit.config.ConduitConfig;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
 import net.minecraft.world.level.GameType;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.function.IntConsumer;
 
@@ -22,6 +26,17 @@ import java.util.function.IntConsumer;
  * <p>The screen is organized into clearly separated sections with proper centering and
  * consistent spacing. All widgets are aligned to a two-column grid centered on the
  * screen, with visible section labels between groups.
+ *
+ * <h3>Layout</h3>
+ * <ul>
+ *   <li><b>Header</b> (pinned top)   &mdash; title + account subtitle.</li>
+ *   <li><b>Scrollable content</b>    &mdash; every settings section (see below). The
+ *       mouse wheel, <kbd>PgUp</kbd>/<kbd>PgDn</kbd>, <kbd>Home</kbd>/<kbd>End</kbd>
+ *       and a scrollbar on the right all work to navigate when the window is too
+ *       short to show everything at once.</li>
+ *   <li><b>Footer</b> (pinned bottom) &mdash; status line + Start / Cancel buttons,
+ *       always visible regardless of window size.</li>
+ * </ul>
  *
  * <h3>Sections</h3>
  * <ol>
@@ -76,12 +91,28 @@ public class HostWorldScreen extends Screen {
 	/** Vertical space reserved for a section header (rendered text). */
 	private static final int SECTION_H = 14;
 
-	// Section header Y positions (computed in init, consumed by extractRenderState).
+	/** Height of the fixed header strip (title + subtitle). */
+	private static final int HEADER_H = 34;
+	/** Height of the fixed footer strip (status + action buttons). */
+	private static final int FOOTER_H = 66;
+	/** Width of the scrollbar gutter on the right side of the scrollable area. */
+	private static final int SCROLLBAR_W = 6;
+
+	// ── Section headers (designed-Y in the virtual content space). ──
 	private int headerCoreY;
 	private int headerRulesY;
 	private int headerWorldY;
 	private int headerServerY;
 	private int headerAccountY;
+
+	/** Widgets that participate in the scrolling viewport (everything except footer). */
+	private final List<AbstractWidget> scrollable = new ArrayList<>();
+	/** Each scrollable widget's <em>design</em> Y (its position before scroll offset). */
+	private final List<Integer> designY = new ArrayList<>();
+	/** Current scroll offset in pixels. 0 = top. */
+	private int scrollOffset = 0;
+	/** Total height of the virtual content (tallest designed Y + widget height). */
+	private int contentHeight = 0;
 
 	private static final String[] GAME_MODES = {"survival", "creative", "adventure", "spectator"};
 	private static final String[] DIFFICULTIES = {"peaceful", "easy", "normal", "hard"};
@@ -100,15 +131,56 @@ public class HostWorldScreen extends Screen {
 		this.chosenPlayerIdleTimeout  = cfg.playerIdleTimeout;
 	}
 
+	// ── Viewport helpers ─────────────────────────────────────────────────────
+
+	private int viewportTop()    { return HEADER_H; }
+	private int viewportBottom() { return height - FOOTER_H; }
+	private int viewportHeight() { return Math.max(0, viewportBottom() - viewportTop()); }
+
+	/** Register a scrollable widget at its <em>design</em> y and remember it. */
+	private <T extends AbstractWidget> T addScrollable(T widget, int dy) {
+		scrollable.add(widget);
+		designY.add(dy);
+		addRenderableWidget(widget);
+		return widget;
+	}
+
+	private void setScrollOffset(int v) {
+		int maxScroll = Math.max(0, contentHeight - viewportHeight());
+		scrollOffset = Math.max(0, Math.min(v, maxScroll));
+		applyScroll();
+	}
+
+	/** Apply the current scroll offset to every scrollable widget's Y and visibility. */
+	private void applyScroll() {
+		int top = viewportTop();
+		int bottom = viewportBottom();
+		for (int i = 0; i < scrollable.size(); i++) {
+			AbstractWidget w = scrollable.get(i);
+			int y = designY.get(i) - scrollOffset;
+			w.setY(y);
+			// Hide (and disable) widgets whose top edge is above the viewport or whose
+			// bottom edge is below it &mdash; keeps clicks from hitting offscreen widgets.
+			boolean visible = y + w.getHeight() > top && y < bottom;
+			w.visible = visible;
+			// Don't toggle active here; we don't know the caller's intent. We just rely
+			// on visibility to stop pointer/keyboard events outside the viewport.
+		}
+	}
+
 	@Override
 	protected void init() {
+		scrollable.clear();
+		designY.clear();
+
 		ConduitConfig.Values cfg = ConduitClient.get().config().values();
 
 		// ── Grid geometry ──
 		int cx   = width / 2;
 		int colL = cx - COL_W - COL_GAP / 2;
 		int colR = cx + COL_GAP / 2;
-		int y    = 36;
+		// Design-Y starts just below the header with a small breathing gap.
+		int y    = HEADER_H + 4;
 
 		// ────────────────────────────── Core Settings ──────────────────────────────
 		headerCoreY = y; y += SECTION_H;
@@ -123,7 +195,7 @@ public class HostWorldScreen extends Screen {
 									"conduit.screen.host.gamemode", displayName(chosenGameMode)));
 						})
 				.bounds(colL, y, COL_W, 20).build();
-		addRenderableWidget(gameModeCycle);
+		addScrollable(gameModeCycle, y);
 
 		difficultyCycle = Button.builder(
 						Component.translatable("conduit.screen.host.difficulty",
@@ -134,31 +206,31 @@ public class HostWorldScreen extends Screen {
 									"conduit.screen.host.difficulty", displayName(chosenDifficulty)));
 						})
 				.bounds(colR, y, COL_W, 20).build();
-		addRenderableWidget(difficultyCycle);
+		addScrollable(difficultyCycle, y);
 		y += ROW_H;
 
 		// Row: Max players + Render distance
-		addRenderableWidget(new IntSlider(colL, y, COL_W, 20,
+		addScrollable(new IntSlider(colL, y, COL_W, 20,
 				chosenMaxPlayers, 2, 50,
 				"conduit.screen.host.max_players",
-				v -> chosenMaxPlayers = v));
+				v -> chosenMaxPlayers = v), y);
 
-		addRenderableWidget(new IntSlider(colR, y, COL_W, 20,
+		addScrollable(new IntSlider(colR, y, COL_W, 20,
 				chosenRenderDistance, 2, 32,
 				"conduit.screen.admin.render_distance",
-				v -> chosenRenderDistance = v));
+				v -> chosenRenderDistance = v), y);
 		y += ROW_H;
 
 		// Row: Simulation distance + Spawn protection
-		addRenderableWidget(new IntSlider(colL, y, COL_W, 20,
+		addScrollable(new IntSlider(colL, y, COL_W, 20,
 				chosenSimulationDistance, 2, 32,
 				"conduit.screen.admin.simulation_distance",
-				v -> chosenSimulationDistance = v));
+				v -> chosenSimulationDistance = v), y);
 
-		addRenderableWidget(new IntSlider(colR, y, COL_W, 20,
+		addScrollable(new IntSlider(colR, y, COL_W, 20,
 				chosenSpawnProtection, 0, 64,
 				"conduit.screen.host.spawn_protection",
-				v -> chosenSpawnProtection = v));
+				v -> chosenSpawnProtection = v), y);
 		y += ROW_H + 4;
 
 		// ────────────────────────────── Gameplay Rules ─────────────────────────────
@@ -168,36 +240,38 @@ public class HostWorldScreen extends Screen {
 		pvpBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.pvp"), font)
 				.pos(colL, y).selected(cfg.defaultPvp).build();
-		addRenderableWidget(pvpBox);
+		addScrollable(pvpBox, y);
 
 		allowCheatsBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.allow_cheats"), font)
 				.pos(colR, y).selected(cfg.defaultAllowCheats).build();
-		addRenderableWidget(allowCheatsBox);
+		addScrollable(allowCheatsBox, y);
 		y += ROW_H;
 
 		// Row: Allow Flight + Force Game Mode
 		allowFlightBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.allow_flight"), font)
 				.pos(colL, y).selected(cfg.allowFlight).build();
-		addRenderableWidget(allowFlightBox);
+		addScrollable(allowFlightBox, y);
 
 		forceGameModeBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.force_gamemode"), font)
 				.pos(colR, y).selected(cfg.forceGameMode).build();
-		addRenderableWidget(forceGameModeBox);
+		addScrollable(forceGameModeBox, y);
 		y += ROW_H;
 
 		// Row: Crossplay + Announce Advancements
 		crossplayBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.crossplay"), font)
 				.pos(colL, y).selected(cfg.crossplayDefault).build();
-		addRenderableWidget(crossplayBox);
+		crossplayBox.setTooltip(Tooltip.create(
+				Component.translatable("conduit.tooltip.crossplay")));
+		addScrollable(crossplayBox, y);
 
 		announceAdvancementsBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.announce_advancements"), font)
 				.pos(colR, y).selected(cfg.announceAdvancements).build();
-		addRenderableWidget(announceAdvancementsBox);
+		addScrollable(announceAdvancementsBox, y);
 		y += ROW_H + 4;
 
 		// ────────────────────────────── World Rules ────────────────────────────────
@@ -207,24 +281,24 @@ public class HostWorldScreen extends Screen {
 		spawnNpcsBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.spawn_npcs"), font)
 				.pos(colL, y).selected(cfg.spawnNpcs).build();
-		addRenderableWidget(spawnNpcsBox);
+		addScrollable(spawnNpcsBox, y);
 
 		spawnAnimalsBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.spawn_animals"), font)
 				.pos(colR, y).selected(cfg.spawnAnimals).build();
-		addRenderableWidget(spawnAnimalsBox);
+		addScrollable(spawnAnimalsBox, y);
 		y += ROW_H;
 
 		// Row: Spawn Monsters + Command Blocks
 		spawnMonstersBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.spawn_monsters"), font)
 				.pos(colL, y).selected(cfg.spawnMonsters).build();
-		addRenderableWidget(spawnMonstersBox);
+		addScrollable(spawnMonstersBox, y);
 
 		enableCommandBlockBox = Checkbox.builder(
 						Component.translatable("conduit.screen.host.enable_command_block"), font)
 				.pos(colR, y).selected(cfg.enableCommandBlock).build();
-		addRenderableWidget(enableCommandBlockBox);
+		addScrollable(enableCommandBlockBox, y);
 		y += ROW_H + 4;
 
 		// ────────────────────────────── Server Info ────────────────────────────────
@@ -237,14 +311,14 @@ public class HostWorldScreen extends Screen {
 		motdBox.setMaxLength(59);
 		motdBox.setHint(Component.translatable("conduit.screen.host.motd_hint"));
 		motdBox.setValue(cfg.motd);
-		addRenderableWidget(motdBox);
+		addScrollable(motdBox, y);
 		y += ROW_H;
 
 		// Row: Player idle timeout (full width)
-		addRenderableWidget(new IntSlider(colL, y, motdW, 20,
+		addScrollable(new IntSlider(colL, y, motdW, 20,
 				chosenPlayerIdleTimeout, 0, 60,
 				"conduit.screen.host.idle_timeout",
-				v -> chosenPlayerIdleTimeout = v));
+				v -> chosenPlayerIdleTimeout = v), y);
 		y += ROW_H + 4;
 
 		// ────────────────────────────── Account ────────────────────────────────────
@@ -265,7 +339,7 @@ public class HostWorldScreen extends Screen {
 				.bounds(linkX, y, linkW, 20)
 				.build();
 		linkButton.active = !linked;
-		addRenderableWidget(linkButton);
+		addScrollable(linkButton, y);
 
 		unlinkButton = Button.builder(
 						Component.translatable("conduit.screen.host.unlink"),
@@ -274,25 +348,32 @@ public class HostWorldScreen extends Screen {
 				.build();
 		unlinkButton.visible = linked;
 		unlinkButton.active = linked;
-		addRenderableWidget(unlinkButton);
+		addScrollable(unlinkButton, y);
 		y += ROW_H + 6;
 
-		// ────────────────────────────── Action Buttons ─────────────────────────────
+		// Virtual content reaches to the last row (include its height).
+		contentHeight = y + 2;
 
+		// ────────────────────────────── Footer (pinned) ────────────────────────────
 		int btnW = 200;
+		int footerTop = height - FOOTER_H + 10;
+		int footerY = footerTop + 12;   // leaves room for the status line above.
+
 		startButton = Button.builder(
 						Component.translatable("conduit.screen.host.start"),
 						b -> startHosting())
-				.bounds(cx - btnW / 2, y, btnW, 20)
+				.bounds(cx - btnW / 2, footerY, btnW, 20)
 				.build();
 		addRenderableWidget(startButton);
-		y += ROW_H;
 
 		addRenderableWidget(Button.builder(
 						Component.translatable("conduit.screen.host.cancel"),
 						b -> onClose())
-				.bounds(cx - btnW / 2, y, btnW, 20)
+				.bounds(cx - btnW / 2, footerY + ROW_H, btnW, 20)
 				.build());
+
+		// Clamp scroll (e.g. on resize) and apply.
+		setScrollOffset(scrollOffset);
 	}
 
 	// ── Actions ──────────────────────────────────────────────────────────────
@@ -420,27 +501,51 @@ public class HostWorldScreen extends Screen {
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float dt) {
+		// Header backdrop (prevents scrolled widgets from visibly clipping through).
+		g.fill(0, 0, width, viewportTop(), 0x80000000);
+		// Footer backdrop.
+		g.fill(0, viewportBottom(), width, height, 0x80000000);
+
 		super.extractRenderState(g, mx, my, dt);
 		int cx = width / 2;
 
-		// Title and subtitle
+		// Title and subtitle (pinned).
 		g.centeredText(font, title, cx, 8, 0xFFFFFF);
 		Component subtitle = ConduitClient.get().playit().isLinkedAccount()
 				? Component.translatable("conduit.screen.host.subtitle_linked")
 				: Component.translatable("conduit.screen.host.subtitle_guest");
 		g.centeredText(font, subtitle, cx, 22, 0xAAAAAA);
 
-		// Section headers (left-aligned with a small ▸ marker and a faint divider)
-		drawSection(g, headerCoreY,    Component.translatable("conduit.screen.host.section_core"));
-		drawSection(g, headerRulesY,   Component.translatable("conduit.screen.host.section_rules"));
-		drawSection(g, headerWorldY,   Component.translatable("conduit.screen.host.section_world"));
-		drawSection(g, headerServerY,  Component.translatable("conduit.screen.host.section_server"));
-		drawSection(g, headerAccountY, Component.translatable("conduit.screen.host.section_account"));
+		// Section headers are drawn at their design-Y minus the current scrollOffset,
+		// but only if they are visible within the viewport.
+		drawSectionIfVisible(g, headerCoreY,    Component.translatable("conduit.screen.host.section_core"));
+		drawSectionIfVisible(g, headerRulesY,   Component.translatable("conduit.screen.host.section_rules"));
+		drawSectionIfVisible(g, headerWorldY,   Component.translatable("conduit.screen.host.section_world"));
+		drawSectionIfVisible(g, headerServerY,  Component.translatable("conduit.screen.host.section_server"));
+		drawSectionIfVisible(g, headerAccountY, Component.translatable("conduit.screen.host.section_account"));
 
-		// Status line at the bottom
+		// Scrollbar (only drawn when the content is taller than the viewport).
+		drawScrollbar(g);
+
+		// Scroll hint when applicable.
+		if (contentHeight > viewportHeight()) {
+			String hint = scrollOffset == 0
+					? "\u00A77Scroll for more \u25BE"
+					: "\u00A77Scroll \u25B4\u25BE for more";
+			g.text(font, Component.literal(hint), 6, viewportTop() - 10, 0x888888, false);
+		}
+
+		// Status line in the footer.
 		Component status = Component.translatable("conduit.screen.host.status",
 				statusLine != null ? statusLine : Component.literal("idle"));
-		g.centeredText(font, status, cx, height - 14, 0xFFFF55);
+		int statusY = viewportBottom() + 4;
+		g.centeredText(font, status, cx, statusY, 0xFFFF55);
+	}
+
+	private void drawSectionIfVisible(GuiGraphicsExtractor g, int designYHeader, Component label) {
+		int y = designYHeader - scrollOffset;
+		if (y + SECTION_H < viewportTop() || y > viewportBottom()) return;
+		drawSection(g, y, label);
 	}
 
 	private void drawSection(GuiGraphicsExtractor g, int y, Component label) {
@@ -452,6 +557,54 @@ public class HostWorldScreen extends Screen {
 		g.fill(lx, y + 5, lx + 60, y + 6, 0x40FFFFFF);
 		g.fill(rx - 60, y + 5, rx, y + 6, 0x40FFFFFF);
 		g.centeredText(font, label, cx, y, 0xFFFFFF);
+	}
+
+	private void drawScrollbar(GuiGraphicsExtractor g) {
+		int viewH = viewportHeight();
+		if (contentHeight <= viewH) return;
+
+		int top = viewportTop();
+		int bottom = viewportBottom();
+		int trackX = width - SCROLLBAR_W - 2;
+
+		// Track
+		g.fill(trackX, top, trackX + SCROLLBAR_W, bottom, 0x30FFFFFF);
+
+		// Thumb
+		float ratio = (float) viewH / contentHeight;
+		int thumbH = Math.max(16, (int) (viewH * ratio));
+		int travel = viewH - thumbH;
+		int maxScroll = Math.max(1, contentHeight - viewH);
+		int thumbY = top + (int) ((long) scrollOffset * travel / maxScroll);
+		g.fill(trackX, thumbY, trackX + SCROLLBAR_W, thumbY + thumbH, 0xC0FFFFFF);
+	}
+
+	// ── Input: scrolling ────────────────────────────────────────────────────
+
+	@Override
+	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+		if (mouseY >= viewportTop() && mouseY <= viewportBottom()
+				&& contentHeight > viewportHeight()) {
+			int step = (int) (scrollY * -ROW_H); // wheel-up -> content moves up (scroll down).
+			setScrollOffset(scrollOffset + step);
+			return true;
+		}
+		return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+	}
+
+	@Override
+	public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
+		int keyCode = event.key();
+		// 266 = PAGE_UP, 267 = PAGE_DOWN, 268 = HOME, 269 = END (GLFW)
+		int page = Math.max(20, viewportHeight() - ROW_H);
+		switch (keyCode) {
+			case 266 -> { setScrollOffset(scrollOffset - page); return true; }
+			case 267 -> { setScrollOffset(scrollOffset + page); return true; }
+			case 268 -> { setScrollOffset(0); return true; }
+			case 269 -> { setScrollOffset(Integer.MAX_VALUE); return true; }
+			default -> { /* fall-through */ }
+		}
+		return super.keyPressed(event);
 	}
 
 	@Override
