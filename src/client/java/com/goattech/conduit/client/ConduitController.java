@@ -51,6 +51,18 @@ public final class ConduitController {
 			int simulationDistance
 	) {
 		ConduitClient cc = ConduitClient.get();
+
+		// Guard against double-start: if a flow is already in progress or running,
+		// short-circuit with a failed future rather than re-publishing the world
+		// or spinning up a second agent subprocess.
+		if (cc.session().isAnythingRunning()) {
+			ConduitMod.LOGGER.warn("startHosting() called while session is {} \u2014 ignoring",
+					cc.session().state());
+			return CompletableFuture.failedFuture(new IllegalStateException(
+					"A hosting session is already " + cc.session().state().name().toLowerCase()
+							+ "; stop it first."));
+		}
+
 		cc.session().setState(ConduitSessionHolder.State.STARTING);
 		ConduitMod.LOGGER.info(
 				"Start hosting (mode={}, difficulty={}, pvp={}, crossplay={}, maxPlayers={})",

@@ -35,6 +35,9 @@
 	"conduit.screen.host.motd": "Server MOTD",
 	"conduit.screen.host.motd_hint": "Shown in your friends' server list",
 
+	"conduit.tooltip.crossplay": "Also starts a standalone Geyser + Floodgate bridge so Bedrock friends can join on the UDP port shown in the Network tab.",
+	"conduit.tooltip.stop_hosting": "Shuts down the playit tunnel, stops Geyser (if running) and removes the server-list entry. Your world stays open.",
+
 	"conduit.screen.host.link_account_optional": "Link playit.gg Account (optional)",
 	"conduit.screen.host.linking_opening_browser": "Preparing link \u2014 opening your browser...",
 	"conduit.screen.host.linking_waiting_accept": "Click \"Accept\" in your browser to finish linking.",
@@ -62,6 +65,7 @@
 	"conduit.screen.admin.ban": "Ban",
 	"conduit.screen.admin.op": "Op",
 	"conduit.screen.admin.deop": "Deop",
+	"conduit.screen.admin.no_players": "No players are online right now.",
 
 	"conduit.screen.admin.render_distance": "Render distance: %d",
 	"conduit.screen.admin.simulation_distance": "Simulation distance: %d",
